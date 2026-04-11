@@ -1,0 +1,708 @@
+{
+  "version": 1,
+  "n_samples": 100,
+  "info_semantic": "data/replica_v1/office_0/habitat/info_semantic.json",
+  "note": "Классы Replica: имена как в info_semantic (например chair, base-cabinet).",
+  "samples": [
+    {
+      "id": 0,
+      "scene": "office0",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000000.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0000.npy"
+    },
+    {
+      "id": 1,
+      "scene": "office0",
+      "frame_index": 12,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000012.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0012.npy"
+    },
+    {
+      "id": 2,
+      "scene": "office0",
+      "frame_index": 25,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000025.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0025.npy"
+    },
+    {
+      "id": 3,
+      "scene": "office0",
+      "frame_index": 38,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000038.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0038.npy"
+    },
+    {
+      "id": 4,
+      "scene": "office0",
+      "frame_index": 51,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000051.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0051.npy"
+    },
+    {
+      "id": 5,
+      "scene": "office0",
+      "frame_index": 64,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000064.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0064.npy"
+    },
+    {
+      "id": 6,
+      "scene": "office0",
+      "frame_index": 77,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000077.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0077.npy"
+    },
+    {
+      "id": 7,
+      "scene": "office0",
+      "frame_index": 90,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000090.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0090.npy"
+    },
+    {
+      "id": 8,
+      "scene": "office0",
+      "frame_index": 102,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000102.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0102.npy"
+    },
+    {
+      "id": 9,
+      "scene": "office0",
+      "frame_index": 115,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000115.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0115.npy"
+    },
+    {
+      "id": 10,
+      "scene": "office0",
+      "frame_index": 128,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000128.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0128.npy"
+    },
+    {
+      "id": 11,
+      "scene": "office0",
+      "frame_index": 141,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000141.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0141.npy"
+    },
+    {
+      "id": 12,
+      "scene": "office0",
+      "frame_index": 154,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000154.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0154.npy"
+    },
+    {
+      "id": 13,
+      "scene": "office0",
+      "frame_index": 167,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000167.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0167.npy"
+    },
+    {
+      "id": 14,
+      "scene": "office0",
+      "frame_index": 180,
+      "rgb": "/mnt/data/replica_sim_nvs/office0/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office0/results_habitat/semantic/semantic_map_0180.npy"
+    },
+    {
+      "id": 15,
+      "scene": "office1",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000001.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0001.npy"
+    },
+    {
+      "id": 16,
+      "scene": "office1",
+      "frame_index": 7,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000008.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0008.npy"
+    },
+    {
+      "id": 17,
+      "scene": "office1",
+      "frame_index": 14,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000015.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0015.npy"
+    },
+    {
+      "id": 18,
+      "scene": "office1",
+      "frame_index": 22,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000023.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0023.npy"
+    },
+    {
+      "id": 19,
+      "scene": "office1",
+      "frame_index": 29,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000030.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0030.npy"
+    },
+    {
+      "id": 20,
+      "scene": "office1",
+      "frame_index": 37,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000113.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0113.npy"
+    },
+    {
+      "id": 21,
+      "scene": "office1",
+      "frame_index": 44,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000120.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0120.npy"
+    },
+    {
+      "id": 22,
+      "scene": "office1",
+      "frame_index": 52,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000128.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0128.npy"
+    },
+    {
+      "id": 23,
+      "scene": "office1",
+      "frame_index": 59,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000135.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0135.npy"
+    },
+    {
+      "id": 24,
+      "scene": "office1",
+      "frame_index": 66,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000142.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0142.npy"
+    },
+    {
+      "id": 25,
+      "scene": "office1",
+      "frame_index": 74,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000150.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0150.npy"
+    },
+    {
+      "id": 26,
+      "scene": "office1",
+      "frame_index": 81,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000157.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0157.npy"
+    },
+    {
+      "id": 27,
+      "scene": "office1",
+      "frame_index": 89,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000165.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0165.npy"
+    },
+    {
+      "id": 28,
+      "scene": "office1",
+      "frame_index": 96,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000172.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0172.npy"
+    },
+    {
+      "id": 29,
+      "scene": "office1",
+      "frame_index": 104,
+      "rgb": "/mnt/data/replica_sim_nvs/office1/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office1/results_habitat/semantic/semantic_map_0180.npy"
+    },
+    {
+      "id": 30,
+      "scene": "office2",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000000.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0000.npy"
+    },
+    {
+      "id": 31,
+      "scene": "office2",
+      "frame_index": 13,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000013.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0013.npy"
+    },
+    {
+      "id": 32,
+      "scene": "office2",
+      "frame_index": 27,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000027.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0027.npy"
+    },
+    {
+      "id": 33,
+      "scene": "office2",
+      "frame_index": 41,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000041.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0041.npy"
+    },
+    {
+      "id": 34,
+      "scene": "office2",
+      "frame_index": 55,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000055.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0055.npy"
+    },
+    {
+      "id": 35,
+      "scene": "office2",
+      "frame_index": 69,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000069.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0069.npy"
+    },
+    {
+      "id": 36,
+      "scene": "office2",
+      "frame_index": 83,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000083.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0083.npy"
+    },
+    {
+      "id": 37,
+      "scene": "office2",
+      "frame_index": 96,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000096.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0096.npy"
+    },
+    {
+      "id": 38,
+      "scene": "office2",
+      "frame_index": 110,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000110.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0110.npy"
+    },
+    {
+      "id": 39,
+      "scene": "office2",
+      "frame_index": 124,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000124.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0124.npy"
+    },
+    {
+      "id": 40,
+      "scene": "office2",
+      "frame_index": 138,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000138.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0138.npy"
+    },
+    {
+      "id": 41,
+      "scene": "office2",
+      "frame_index": 152,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000152.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0152.npy"
+    },
+    {
+      "id": 42,
+      "scene": "office2",
+      "frame_index": 166,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000166.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0166.npy"
+    },
+    {
+      "id": 43,
+      "scene": "office2",
+      "frame_index": 180,
+      "rgb": "/mnt/data/replica_sim_nvs/office2/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office2/results_habitat/semantic/semantic_map_0180.npy"
+    },
+    {
+      "id": 44,
+      "scene": "office3",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000000.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0000.npy"
+    },
+    {
+      "id": 45,
+      "scene": "office3",
+      "frame_index": 13,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000013.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0013.npy"
+    },
+    {
+      "id": 46,
+      "scene": "office3",
+      "frame_index": 27,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000027.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0027.npy"
+    },
+    {
+      "id": 47,
+      "scene": "office3",
+      "frame_index": 41,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000041.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0041.npy"
+    },
+    {
+      "id": 48,
+      "scene": "office3",
+      "frame_index": 55,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000055.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0055.npy"
+    },
+    {
+      "id": 49,
+      "scene": "office3",
+      "frame_index": 69,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000069.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0069.npy"
+    },
+    {
+      "id": 50,
+      "scene": "office3",
+      "frame_index": 83,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000083.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0083.npy"
+    },
+    {
+      "id": 51,
+      "scene": "office3",
+      "frame_index": 96,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000096.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0096.npy"
+    },
+    {
+      "id": 52,
+      "scene": "office3",
+      "frame_index": 110,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000110.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0110.npy"
+    },
+    {
+      "id": 53,
+      "scene": "office3",
+      "frame_index": 124,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000124.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0124.npy"
+    },
+    {
+      "id": 54,
+      "scene": "office3",
+      "frame_index": 138,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000138.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0138.npy"
+    },
+    {
+      "id": 55,
+      "scene": "office3",
+      "frame_index": 152,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000152.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0152.npy"
+    },
+    {
+      "id": 56,
+      "scene": "office3",
+      "frame_index": 166,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000166.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0166.npy"
+    },
+    {
+      "id": 57,
+      "scene": "office3",
+      "frame_index": 180,
+      "rgb": "/mnt/data/replica_sim_nvs/office3/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office3/results_habitat/semantic/semantic_map_0180.npy"
+    },
+    {
+      "id": 58,
+      "scene": "office4",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000001.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0001.npy"
+    },
+    {
+      "id": 59,
+      "scene": "office4",
+      "frame_index": 13,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000014.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0014.npy"
+    },
+    {
+      "id": 60,
+      "scene": "office4",
+      "frame_index": 27,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000028.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0028.npy"
+    },
+    {
+      "id": 61,
+      "scene": "office4",
+      "frame_index": 40,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000041.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0041.npy"
+    },
+    {
+      "id": 62,
+      "scene": "office4",
+      "frame_index": 54,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000055.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0055.npy"
+    },
+    {
+      "id": 63,
+      "scene": "office4",
+      "frame_index": 67,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000068.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0068.npy"
+    },
+    {
+      "id": 64,
+      "scene": "office4",
+      "frame_index": 81,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000082.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0082.npy"
+    },
+    {
+      "id": 65,
+      "scene": "office4",
+      "frame_index": 94,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000095.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0095.npy"
+    },
+    {
+      "id": 66,
+      "scene": "office4",
+      "frame_index": 108,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000112.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0112.npy"
+    },
+    {
+      "id": 67,
+      "scene": "office4",
+      "frame_index": 121,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000125.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0125.npy"
+    },
+    {
+      "id": 68,
+      "scene": "office4",
+      "frame_index": 135,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000139.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0139.npy"
+    },
+    {
+      "id": 69,
+      "scene": "office4",
+      "frame_index": 148,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000152.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0152.npy"
+    },
+    {
+      "id": 70,
+      "scene": "office4",
+      "frame_index": 162,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000166.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0166.npy"
+    },
+    {
+      "id": 71,
+      "scene": "office4",
+      "frame_index": 176,
+      "rgb": "/mnt/data/replica_sim_nvs/office4/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/office4/results_habitat/semantic/semantic_map_0180.npy"
+    },
+    {
+      "id": 72,
+      "scene": "room0",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000000.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0000.npy"
+    },
+    {
+      "id": 73,
+      "scene": "room0",
+      "frame_index": 9,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000033.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0033.npy"
+    },
+    {
+      "id": 74,
+      "scene": "room0",
+      "frame_index": 19,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000043.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0043.npy"
+    },
+    {
+      "id": 75,
+      "scene": "room0",
+      "frame_index": 29,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000053.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0053.npy"
+    },
+    {
+      "id": 76,
+      "scene": "room0",
+      "frame_index": 39,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000063.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0063.npy"
+    },
+    {
+      "id": 77,
+      "scene": "room0",
+      "frame_index": 49,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000098.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0098.npy"
+    },
+    {
+      "id": 78,
+      "scene": "room0",
+      "frame_index": 59,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000108.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0108.npy"
+    },
+    {
+      "id": 79,
+      "scene": "room0",
+      "frame_index": 69,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000118.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0118.npy"
+    },
+    {
+      "id": 80,
+      "scene": "room0",
+      "frame_index": 79,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000128.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0128.npy"
+    },
+    {
+      "id": 81,
+      "scene": "room0",
+      "frame_index": 89,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000138.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0138.npy"
+    },
+    {
+      "id": 82,
+      "scene": "room0",
+      "frame_index": 99,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000148.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0148.npy"
+    },
+    {
+      "id": 83,
+      "scene": "room0",
+      "frame_index": 109,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000158.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0158.npy"
+    },
+    {
+      "id": 84,
+      "scene": "room0",
+      "frame_index": 119,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000168.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0168.npy"
+    },
+    {
+      "id": 85,
+      "scene": "room0",
+      "frame_index": 129,
+      "rgb": "/mnt/data/replica_sim_nvs/room0/results_habitat/frame000178.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room0/results_habitat/semantic/semantic_map_0178.npy"
+    },
+    {
+      "id": 86,
+      "scene": "room1",
+      "frame_index": 0,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000000.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0000.npy"
+    },
+    {
+      "id": 87,
+      "scene": "room1",
+      "frame_index": 13,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000013.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0013.npy"
+    },
+    {
+      "id": 88,
+      "scene": "room1",
+      "frame_index": 27,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000027.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0027.npy"
+    },
+    {
+      "id": 89,
+      "scene": "room1",
+      "frame_index": 41,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000041.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0041.npy"
+    },
+    {
+      "id": 90,
+      "scene": "room1",
+      "frame_index": 55,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000055.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0055.npy"
+    },
+    {
+      "id": 91,
+      "scene": "room1",
+      "frame_index": 69,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000069.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0069.npy"
+    },
+    {
+      "id": 92,
+      "scene": "room1",
+      "frame_index": 83,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000083.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0083.npy"
+    },
+    {
+      "id": 93,
+      "scene": "room1",
+      "frame_index": 96,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000096.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0096.npy"
+    },
+    {
+      "id": 94,
+      "scene": "room1",
+      "frame_index": 110,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000110.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0110.npy"
+    },
+    {
+      "id": 95,
+      "scene": "room1",
+      "frame_index": 124,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000124.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0124.npy"
+    },
+    {
+      "id": 96,
+      "scene": "room1",
+      "frame_index": 138,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000138.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0138.npy"
+    },
+    {
+      "id": 97,
+      "scene": "room1",
+      "frame_index": 152,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000152.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0152.npy"
+    },
+    {
+      "id": 98,
+      "scene": "room1",
+      "frame_index": 166,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000166.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0166.npy"
+    },
+    {
+      "id": 99,
+      "scene": "room1",
+      "frame_index": 180,
+      "rgb": "/mnt/data/replica_sim_nvs/room1/results_habitat/frame000180.jpg",
+      "semantic": "/mnt/data/replica_sim_nvs/room1/results_habitat/semantic/semantic_map_0180.npy"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+*.xml
+*.iml
+.DS_Store
+**/.DS_Store
+/data/checkpoint/
+# Large vendored trees + nested .git; copy from ActiveSGM or `git submodule update` per .gitmodules
+/third_parties/
+*.bin
+*.pth
+/results*/
+__pycache__
+*.out
+*.png
+*.idea
+/ckpt/
+/ckpts/
+/output*/
+# Do not use /replica*/ here — it would ignore replica_sem_benchmark/
+*.log
+nohup.out
+/tmp/

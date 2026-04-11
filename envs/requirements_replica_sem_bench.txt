@@ -1,0 +1,34 @@
+# SAM × CLIP benchmark (replica_sem_benchmark/eval_clip_sam_systematic.py)
+# Install PyTorch + torchvision FIRST via create_replica_sem_bench_env.sh (CUDA/CPU).
+#
+# HF SAM2/SAM3: transformers>=4.56 (Sam2VideoModel / sam2_video).
+# SAM1: Meta segment-anything (git). URL must use a hyphen: …/segment-anything.git
+#
+# Pip may print “dependency conflicts” for botocore, mlflow, paddlex, jupyter, … — those
+# are NOT from this file; they mean the env already had other stacks. Prefer a **clean**
+# conda env created only with create_replica_sem_bench_env.sh.
+#
+# If you see ``torchvision … requires torch==… but you have torch …``, reinstall both
+# from the same PyTorch index (create_replica_sem_bench_env.sh does this after ``pip -r``).
+#
+# If you must share an env with mlflow-skinny, keep packaging<26:
+packaging>=24,<26
+
+# HF SAM2: need >=4.56 for sam2_video. Avoid transformers 5.x for now — 5.5 + accelerate 1.13
+# often hits "cannot import dispatch_model" / pipeline lazy-load errors with mask-generation.
+transformers>=4.56.0,<5.0.0
+accelerate>=0.34.0,<1.0.0
+safetensors>=0.4.0
+huggingface_hub>=0.23.0
+# Satisfies botocore if ~/.local shadows conda (avoids bogus "could not import pipeline").
+jmespath>=0.7.1
+open_clip_torch
+opencv-python-headless>=4.8.0
+pandas>=2.0.0
+pillow>=10.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+tqdm>=4.65.0
+rich>=13.0.0
+wandb>=0.16.0
+git+https://github.com/facebookresearch/segment-anything.git

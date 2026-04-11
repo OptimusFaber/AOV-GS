@@ -1,0 +1,17 @@
+[submodule "third_parties/coslam"]
+	path = third_parties/coslam
+	url = https://github.com/HengyiWang/Co-SLAM.git
+[submodule "third_parties/neural_slam_eval"]
+	path = third_parties/neural_slam_eval
+	url = https://github.com/JingwenWang95/neural_slam_eval.git
+[submodule "third_parties/splatam"]
+	path = third_parties/splatam
+	url = https://github.com/spla-tam/SplaTAM.git
+[submodule "third_parties/channel-rasterization"]
+	path = third_parties/channel_rasterization
+	url = https://github.com/lly00412/semantic-gaussians.git
+	branch = liyan/dev
+[submodule "third_parties/sparse_channel_rasterization"]
+	path = third_parties/sparse_channel_rasterization
+	url = https://github.com/lly00412/semantic-gaussians.git
+	branch = hairong/sparse_ver

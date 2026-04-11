@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "note": "Классы Replica на sample_id: SAM один раз на кадр, CLIP — argmax маски на класс.",
+  "by_sample_id": {
+    "0": ["chair", "table", "monitor"],
+    "1": ["sofa", "table"],
+    "2": ["chair", "cabinet"]
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "1": {
+    "isthing": 1,
+    "name": "wall"
+  },
+  "2": {
+    "isthing": 1,
+    "name": "floor"
+  },
+  "3": {
+    "isthing": 1,
+    "name": "chair"
+  },
+  "4": {
+    "isthing": 1,
+    "name": "door"
+  },
+  "5": {
+    "isthing": 1,
+    "name": "table"
+  },
+  "6": {
+    "isthing": 1,
+    "name": "picture"
+  },
+  "7": {
+    "isthing": 1,
+    "name": "cabinet"
+  },
+  "8": {
+    "isthing": 1,
+    "name": "cushion"
+  },
+  "9": {
+    "isthing": 1,
+    "name": "window"
+  },
+  "10": {
+    "isthing": 1,
+    "name": "sofa"
+  },
+  "11": {
+    "isthing": 1,
+    "name": "bed"
+  },
+  "12": {
+    "isthing": 1,
+    "name": "curtain"
+  },
+  "13": {
+    "isthing": 1,
+    "name": "chest_of_drawers"
+  },
+  "14": {
+    "isthing": 1,
+    "name": "plant"
+  },
+  "15": {
+    "isthing": 1,
+    "name": "sink"
+  },
+  "16": {
+    "isthing": 1,
+    "name": "stairs"
+  },
+  "17": {
+    "isthing": 1,
+    "name": "ceiling"
+  },
+  "18": {
+    "isthing": 1,
+    "name": "toilet"
+  },
+  "19": {
+    "isthing": 1,
+    "name": "stool"
+  },
+  "20": {
+    "isthing": 1,
+    "name": "towel"
+  },
+  "21": {
+    "isthing": 1,
+    "name": "mirror"
+  },
+  "22": {
+    "isthing": 1,
+    "name": "tv_monitor"
+  },
+  "23": {
+    "isthing": 1,
+    "name": "shower"
+  },
+  "24": {
+    "isthing": 1,
+    "name": "column"
+  },
+  "25": {
+    "isthing": 1,
+    "name": "bathtub"
+  },
+  "26": {
+    "isthing": 1,
+    "name": "counter"
+  },
+  "27": {
+    "isthing": 1,
+    "name": "fireplace"
+  },
+  "28": {
+    "isthing": 1,
+    "name": "lighting"
+  },
+  "29": {
+    "isthing": 1,
+    "name": "beam"
+  },
+  "30": {
+    "isthing": 1,
+    "name": "railing"
+  },
+  "31": {
+    "isthing": 1,
+    "name": "shelving"
+  },
+  "32": {
+    "isthing": 1,
+    "name": "blinds"
+  },
+  "33": {
+    "isthing": 1,
+    "name": "gym_equipment"
+  },
+  "34": {
+    "isthing": 1,
+    "name": "seating"
+  },
+  "35": {
+    "isthing": 1,
+    "name": "board_panel"
+  },
+  "36": {
+    "isthing": 1,
+    "name": "furniture"
+  },
+  "37": {
+    "isthing": 1,
+    "name": "appliances"
+  },
+  "38": {
+    "isthing": 1,
+    "name": "clothes"
+  },
+  "39": {
+    "isthing": 1,
+    "name": "objects"
+  },
+  "40": {
+    "isthing": 1,
+    "name": "misc"
+  }
+}
