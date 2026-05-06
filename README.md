@@ -14,8 +14,7 @@
 4. [Чекпойнты SAM / CLIP](#чекпойнты-sam--clip)
 5. [Настройка путей в конфигах](#настройка-путей-в-конфигах)
 6. [Пайплайн: 3 этапа](#пайплайн-3-этапа)
-7. [Бенчмарк `replica_sem_benchmark`](#бенчмарк-replica_sem_benchmark)
-8. [Публикация на GitHub](#публикация-на-github)
+7. [Публикация на GitHub](#публикация-на-github)
 
 ---
 
@@ -196,38 +195,6 @@ bash scripts/activesgm/run_query_lang_fields_office0.sh \
 
 ---
 
-## Бенчмарк `replica_sem_benchmark`
-
-Систематическая оценка **SAM × CLIP** по `replica_sem_benchmark/manifest.json`; SAM и CLIP по очереди (кэш масок, затем CLIP). CSV по умолчанию в `replica_sem_benchmark/results/`.
-
-Отдельное conda-окружение (HF SAM2+, свежий `transformers`):
-
-```bash
-bash envs/create_replica_sem_bench_env.sh
-conda activate replica-sem-bench
-```
-
-Переменные и версии: см. шапку `envs/create_replica_sem_bench_env.sh` и `envs/requirements_replica_sem_bench.txt`. Для весов Laion/OpenCLIP через Hub задайте **`HF_HOME`** или **`HF_HUB_CACHE`**; для OpenCLIP-файлов — **`OPENCLIP_CACHE`**. Скачивание весов: `replica_sem_benchmark/download_model_ckpts.sh` или свой layout чекпойнтов.
-
-**Smoke (2 кадра, один CLIP, SAM1):**
-
-```bash
-export HF_HOME=/path/to/huggingface_hub
-export OPENCLIP_CACHE=/path/to/open_clip
-
-python replica_sem_benchmark/eval_clip_sam_systematic.py \
-  --manifest replica_sem_benchmark/manifest.json \
-  --queries_from_gt \
-  --max_samples 2 \
-  --sam_models local \
-  --sam_ckpt ckpts/sam_vit_b_01ec64.pth \
-  --clip_models ViT-B-32/laion2b_s34b_b79k \
-  --approaches threshold_grid \
-  --out_csv replica_sem_benchmark/results/smoke.csv
-```
-
----
-
 ## Публикация на GitHub
 
 Репозиторий изначально может быть без `.git`. Пример:
@@ -255,7 +222,7 @@ git push -u origin main
 
 - **`scripts/data/`** — загрузка и генерация Replica / MP3D.  
 - **`scripts/evaluation/`** — оценки 3D / семантики / NVS в духе ActiveSGM.  
-- **`scripts/activesgm/run_replica.sh`** и др. — запуск полного ActiveSGM с другими конфигами (`ActiveSem`, `predefine`, `sgsslam`).
+- **`scripts/activesgm/`** — минимальный пайплайн AOV-GS (этап 1–3), грид/запросы для языкового поля.
 
 ---
 

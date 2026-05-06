@@ -15,13 +15,9 @@ __pycache__
 /ckpt/
 /ckpts/
 /output*/
-# Do not use /replica*/ here — it would ignore replica_sem_benchmark/
 *.log
 nohup.out
 /tmp/
 
 # Local ablations/experiments (do not commit / push)
 /ablation_experiments/
-
-# Benchmark artifacts (generated CSVs, local runs)
-/replica_sem_benchmark/results/
