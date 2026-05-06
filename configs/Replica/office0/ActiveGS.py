@@ -52,6 +52,7 @@ if slam["method"] == "splatam":
         room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam_s.py",   # SplaTAM room configuration
         # room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam.py",   # SplaTAM room configuration
         enable_active_planning = True,                             # enable/disable active planning
+        initialize_from_live_frame = True,                         # avoid frame-0 from results_habitat
         dataset_eval_basedir = "data/replica_sim_nvs",
 
         ### bounding box ###

@@ -75,6 +75,12 @@ if slam["method"] == "semsplatam":
         ),
 
         ##### Semantic Network #######
+        # Must match sparse_channel_rasterization/cuda_rasterizer/config.h (TOP_K_LOGITS_CHANNELS).
+        num_topk_logits=16,
+        num_semantic_classes=102,
+        lambda_hel=0.8,
+        lambda_cosine=0.2,
+        uncert_mask_thres=3.0,
         semantic_dir="./data/replica_v1/room_2/habitat/",
         class_info_file='./configs/Replica/office0/class_info_file.json',
         semantic_device="cuda:1",

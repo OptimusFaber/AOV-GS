@@ -7,7 +7,6 @@ with read_base():
     from ...default import *
 
 
-
 ##################################################
 ### General
 ##################################################
@@ -44,58 +43,50 @@ if sim["method"] == "habitat_v2":
 ### SLAM
 ##################################################
 slam = dict(
-    method="semsplatam"                                     # SLAM backbone method
+    # ActiveSem baseline without OneFormer/semantic head:
+    method = "splatam"                                     # SLAM backbone method
 )
 
-if slam["method"] == "semsplatam":
+if slam["method"] == "splatam":
     slam.update(
-        room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam_s.py",   # SplaTAM room configuration
-        # room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam.py",   # SplaTAM room configuration
-        enable_active_planning = False,                             # enable/disable active planning
+        room_cfg = f"{dirs['cfg_dir']}/../replica_splatam_s.py",   # SplaTAM room configuration
+        # room_cfg = f"{dirs['cfg_dir']}/../replica_splatam.py",   # SplaTAM room configuration
+        enable_active_planning = True,                              # enable/disable active planning
         dataset_eval_basedir = "data/replica_sim_nvs",
+        # dataset_eval_basedir = "data/Replica",
+
+        ### Validation during training ###
+        eval_during_training = True,                                # enable/disable validation during training
+        eval_during_training_freq = 200,                            # evaluate every N iterations during training
+        eval_during_training_max_frames = None,                     # None or -1 = all frames
 
         ### bounding box ###
         # bbox_bound = [[-2.2,2.6],[-3.4,2.1],[-1.4,2.0]],
-        bbox_bound = [[-2.1,2.5],[-3.2,2],[-1.3,2.0]],
+        bbox_bound = [[-2.1, 2.5], [-3.2, 2], [-1.3, 2.0]],
         bbox_voxel_size = 0.05,
 
-        surface_dist_thre=0.5,
-        find_free_indices_bs=1000,
+        surface_dist_thre = 0.5,
+        find_free_indices_bs = 1000,
 
         ### Refinement step ###
         # explore_map_iter = 1,
         refine_map_iter = 60,
-        use_global_keyframe = False,
+        use_global_keyframe = True,
         global_keyframe = dict(
             completeness_thre = 0.1,
             color_thre = 34, # smaller than this thre, add to global keyframe
             depth_thre = 0.01, # larger than this thre, add to global keyframe [NOT USED]
-            seman_thre = 0.9, # smaller than this thre, add to global keyframe
             quality_method = "relative", # absolute: abs color_thre; relative: percentile
             quality_freq = 100, # eval every quality_freq
             quality_perc_thre = 30, # frames lower than this percentile are added to global KF
         ),
-
-        ##### Semantic Network #######
-        # Must match sparse_channel_rasterization/cuda_rasterizer/config.h (TOP_K_LOGITS_CHANNELS).
-        num_topk_logits=16,
-        num_semantic_classes=102,
-        lambda_hel=0.8,
-        lambda_cosine=0.2,
-        uncert_mask_thres=3.0,
-        semantic_dir="./data/replica_v1/office_0/habitat/",
-        class_info_file='./configs/Replica/office0/class_info_file.json',
-        semantic_device="cuda:1",
-        oneformer_checkpoint='lly00412/oneformer-replica-finetune',
-        coco_checkpoint='shi-labs/oneformer_coco_swin_large',
-        ade20k_checkpoint="shi-labs/oneformer_ade20k_swin_large",
 
         ### override ###
         override = dict(
             map_every = 5,
             report_global_progress_every = 5,
             tracking = dict(
-                use_gt_poses=True, # Use GT Poses for Tracking
+                use_gt_poses = True, # Use GT Poses for Tracking
             )
         )
     )
@@ -104,22 +95,23 @@ if slam["method"] == "semsplatam":
 ### Planner
 ##################################################
 planner = dict(
-    # method= "active_gsv2",                           # planner method [predefined_traj, active_gs]
-    method = "predefined_traj",
+    # active_gsv2 uses render_semantic; without OneFormer we use geometric planner.
+    method = "active_gs",                           # planner method [predefined_traj, active_gs]
+    # method = "predefined_traj",
 
     ### active_gs params ###
     # gs_z_levels = [20, 30, 40, 50], #[20,30,40],
-    max_exploration_steps = 1000,
-    post_refine_steps = 500,
-    max_refinement_steps = 100,
+    max_exploration_steps = 1500,
+    post_refine_steps = 200,
+    max_refinement_steps = 200,
     num_exploration_stage = 2,
     gs_z_levels = [
-        [35], 
+        [35],
         [20, 50],
         # [20, 30, 40, 50]
     ],
     num_dir_samples = [ # viewing direction sample number
-        5, 
+        5,
         15,
     ],
 
@@ -132,23 +124,19 @@ planner = dict(
     rot_step_size = 10, # degree
 
     surface_dist_thre = slam['surface_dist_thre'],
-    topk_cls_confidence = [16,
-                           5],
 
     ### Stop Criteria ###
     explore_thre = 0.005,
-    recognize_thre = 0.3,
     color_ig_thre = 34,
     depth_ig_thre = 0.01,
     post_refinement_eval_freq = 100,
 
-
     up_dir = [0, 0, 1], # up direction for planning pose
     use_traj_pose = True,                          # use pre-defined trajectory pose
     SLAMData_dir = os.path.join(                    # SLAM Data directory (for passive mapping or pre-defined trajectory pose)
-        dirs["data_dir"], 
+        dirs["data_dir"],
         "Replica", general['scene']
-        ),
+    ),
 
     ### RRT ###
     local_planner_method = "RRTNaruto",             # RRT method
@@ -159,7 +147,7 @@ if planner["local_planner_method"] == "RRTNaruto":
         rrt_step_size = planner['trans_step_size'] / slam['bbox_voxel_size'], # Unit: voxel
         rrt_step_amplifier = 10,                    # rrt step amplifier to fast expansion
         rrt_maxz = 100,                             # Maximum Z-level to limit the RRT nodes. Unit: voxel
-        rrt_max_iter = None,                        # maximum iterations for RRT
+        rrt_max_iter = 50000,                       # maximum iterations for RRT
         rrt_z_levels = None,                        # Z levels for sampling RRT nodes. Unit: voxel. Min and Max level
         enable_eval = False,                        # enable RRT evaluation
         enable_direct_line = True,                  # enable direct connection attempt
@@ -169,11 +157,11 @@ if planner["local_planner_method"] == "RRTNaruto":
 ### Visualization
 ##################################################
 visualizer = dict(
-    method = "active_lang",
-    vis_rgbd        = True,                             # visualize RGB-D
+    method = "active_gs",
+    vis_rgbd = True,                             # visualize RGB-D
     vis_rgbd_max_depth = 10
 
     ### mesh related ###
-    # mesh_vis_freq = 500,                                # mesh save frequency
+    # mesh_vis_freq = 500,                       # mesh save frequency
 )
 
