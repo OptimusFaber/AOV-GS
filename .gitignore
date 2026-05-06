@@ -19,3 +19,9 @@ __pycache__
 *.log
 nohup.out
 /tmp/
+
+# Local ablations/experiments (do not commit / push)
+/ablation_experiments/
+
+# Benchmark artifacts (generated CSVs, local runs)
+/replica_sem_benchmark/results/

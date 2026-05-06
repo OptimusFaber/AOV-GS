@@ -2,7 +2,7 @@
 
 **Краткое имя для репозитория:** `aov-gs` или `OAVGS` (Open / Active Vocabulary + Gaussian Splatting).
 
-Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting) и **открытое языковое поле** (SAM + CLIP → автоэнкодер → признаки на гауссианах), в духе LangSplat. Основной конфиг — **ActiveOpenVocab** без OneFormer.
+Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting) и **открытое языковое поле** (SAM + CLIP → автоэнкодер → признаки на гауссианах), в духе LangSplat. Основной конфиг — **ActiveOpenSem** без OneFormer.
 
 ---
 
@@ -56,7 +56,7 @@ pip install git+https://github.com/facebookresearch/segment-anything.git
 
 ### Дополнительные CUDA-расширения (полный ActiveSGM)
 
-Если запускаете **семантический** рендер с большим числом каналов (не минимальный open-vocab пайплайн), см. официальную инструкцию ActiveSGM: [dense / sparse channel rasterization](https://github.com/lly00412/ActiveSGM#build-cuda-tool-for-semantic-rendering). Для конфигов **`ActiveOpenVocab`** + языкового поля через `diff_gaussian_rasterization` это часто **не требуется**.
+Если запускаете **семантический** рендер с большим числом каналов (не минимальный open-vocab пайплайн), см. официальную инструкцию ActiveSGM: [dense / sparse channel rasterization](https://github.com/lly00412/ActiveSGM#build-cuda-tool-for-semantic-rendering). Для конфигов **`ActiveOpenSem`** + языкового поля через `diff_gaussian_rasterization` это часто **не требуется**.
 
 ---
 
@@ -91,7 +91,7 @@ bash scripts/data/generate_replica_nvs.sh all
 
 ## Чекпойнты SAM / CLIP
 
-В конфиге `ActiveOpenVocab` задаётся путь к SAM, например:
+В конфиге `ActiveOpenSem` задаётся путь к SAM, например:
 
 ```python
 sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
@@ -107,7 +107,7 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 
 1. Откройте `configs/Replica/<scene>/habitat.py` и выставьте **`scene_id`** на ваш `mesh_semantic.ply` / stage config в дереве Replica.  
 2. Убедитесь, что `data/Replica/<scene>/` содержит нужные `results` / `results_habitat` и `traj.txt` (см. `replica.py` в датасете).  
-3. При **одной GPU** в `configs/Replica/<scene>/ActiveOpenVocab.py` поставьте `sam_clip.device = "cuda:0"` (иначе падение при отсутствии `cuda:1`).
+3. При **одной GPU** в `configs/Replica/<scene>/ActiveOpenSem.py` поставьте `sam_clip.device = "cuda:0"` (иначе падение при отсутствии `cuda:1`).
 
 ---
 
@@ -126,16 +126,17 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 ```bash
 cd /path/to/aov-gs
 bash scripts/activesgm/01_slam_exploration.sh office0
-# с отладочными keyframes: ... office0 ActiveOpenVocab 0 0 1
+# отладка (keyframes на диск), без окон:  office0 ActiveOpenSem 0 0 1
+# окна OpenCV (RGB-D) + отладка:         office0 ActiveOpenSem 0 1 1
 ```
 
-Аргументы: `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]`.
+Аргументы: `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]`. Четвёртый (`ENABLE_VIS`) должен быть **1**, иначе в логе будет `Visualize : 0` и окон не будет — это не баг, а настройка (`--enable_vis` → `visualizer.vis_rgbd`).
 
 ### Этап 2
 
 ```bash
 bash scripts/activesgm/02_train_clip_autoencoder.sh \
-  results/Replica/office0/ActiveOpenVocab/run_0 \
+  results/Replica/office0/ActiveOpenSem/run_0 \
   64 \
   100 \
   cuda:0
@@ -145,7 +146,7 @@ bash scripts/activesgm/02_train_clip_autoencoder.sh \
 
 ```bash
 bash scripts/activesgm/03_train_gaussian_lang_field.sh \
-  results/Replica/office0/ActiveOpenVocab/run_0 \
+  results/Replica/office0/ActiveOpenSem/run_0 \
   64 \
   s \
   30000 \
@@ -165,7 +166,7 @@ bash scripts/activesgm/03_train_gaussian_lang_field.sh \
 
 ```bash
 bash scripts/activesgm/run_lang_field_full_grid.sh \
-  results/Replica/office0/ActiveOpenVocab/run_0
+  results/Replica/office0/ActiveOpenSem/run_0
 ```
 
 Перед запуском должны существовать `language_features_dim3` … `language_features_dim64`. Логи: `lang_field_grid_logs/`, кривые loss: `lang_field_{L}{D}/loss_{D}{L}.txt`.
@@ -182,7 +183,7 @@ bash scripts/activesgm/run_lang_field_full_grid.sh \
 
 ```bash
 bash scripts/activesgm/run_query_lang_fields_office0.sh \
-  results/Replica/office0/ActiveOpenVocab/run_0
+  results/Replica/office0/ActiveOpenSem/run_0
 ```
 
 Также: `scripts/query_language_field.py`, `scripts/demo_sam_clip_text_query.py`.

@@ -1,7 +1,10 @@
 #!/bin/bash
 set -e  # Exit on error
 
-ROOT=${PWD}
+# Корень AOV-GS (не зависит от текущего cwd при запуске bash .../build_sem.sh)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+cd "${ROOT}"
 
 # Initialize conda for bash script
 eval "$(conda shell.bash hook)"
@@ -40,10 +43,6 @@ echo "=== Установка torch-scatter и torch-sparse ==="
 pip install torch-scatter==2.1.1 torch-sparse==0.6.17 \
   -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
 
-echo "=== Установка habitat-sim ==="
-# habitat-sim
-conda install habitat-sim=0.2.3 headless -c aihabitat -c conda-forge -y
-
 echo "=== Установка CUDA toolkit с CCCL ==="
 # CUDA toolkit с CUDA C++ Standard Library (CCCL) - ЭТО КЛЮЧЕВОЕ ОТЛИЧИЕ!
 conda install -c nvidia -c conda-forge \
@@ -66,8 +65,11 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib:$LD_LIBRARY_PATH
 export CC=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-gcc
 export CXX=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++
 
-# CUDA архитектуры
-export TCNN_CUDA_ARCHITECTURES="75;80;86"
+# CUDA архитектуры для tiny-cuda-nn / torch extensions (CUDA 11.7 макс. ~sm_86).
+# На GPU Ada (sm_89) PyTorch всё равно сообщает 89 — без явного списка сборка часто ломается.
+export TCNN_CUDA_ARCHITECTURES="${TCNN_CUDA_ARCHITECTURES:-75;80;86}"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6}"
+export MAX_JOBS="${MAX_JOBS:-4}"
 
 echo "=== Установка дополнительных библиотек ==="
 # libxcrypt для совместимости
@@ -104,17 +106,65 @@ else
     exit 1
 fi
 
-echo "=== Установка tiny-cuda-nn ==="
-# tiny-cuda-nn - теперь должен работать!
-pip install -v --no-build-isolation \
-  git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+echo "=== Сборка habitat-sim из исходников (как в ActiveSGM) ==="
+# ВНИМАНИЕ: не используем conda-пакеты aihabitat `headless` / `habitat-sim-mutex`,
+# т.к. они часто приводят к крашу шейдеров PTexMeshShader (GL link failed).
+#
+# OpenGL/GLX: Magnum вызывает find_package(OpenGL). В чистом conda без системных
+# библиотек CMake падает. Ставим нужное через conda-forge.
+conda install -c conda-forge git ninja \
+  libgl-devel libegl-devel libglvnd \
+  xorg-libx11 xorg-libxext xorg-libxfixes \
+  -y
+export CMAKE_PREFIX_PATH="${CONDA_PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
 
-echo "=== Установка Diff Gaussian Rasterization ==="
-# Diff Gaussian Rasterization с поддержкой depth - теперь тоже должен работать!
-pip install -v --no-build-isolation \
-  git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110
+HABITAT_SRC="${ROOT}/third_parties/habitat_sim"
+mkdir -p "${ROOT}/third_parties"
+if [ ! -d "${HABITAT_SRC}/.git" ]; then
+    git clone --recursive https://github.com/Huangying-Zhan/habitat-sim.git "${HABITAT_SRC}"
+else
+    echo "Найден ${HABITAT_SRC}: clone пропущен. При проблемах: git pull && git submodule update --init --recursive"
+fi
+
+(
+    cd "${HABITAT_SRC}"
+    rm -rf build
+    pip install -r requirements.txt
+    python setup.py install --headless --bullet
+)
+
+echo "=== Установка tiny-cuda-nn и diff-gaussian-rasterization (CUDA extensions) ==="
+# conda кладёт Python distutils ld в compiler_compat с -Wl,--sysroot=/ → на части хостов
+# падает линковка (/lib64/libm.so.6). Временно убираем compiler_compat из PREFIX на время pip.
+(
+  if [[ -d "${CONDA_PREFIX}/compiler_compat" ]]; then
+    mv "${CONDA_PREFIX}/compiler_compat" "${CONDA_PREFIX}/.__compiler_compat_bak__"
+  fi
+  _restore_compiler_compat() {
+    if [[ -d "${CONDA_PREFIX}/.__compiler_compat_bak__" ]]; then
+      mv "${CONDA_PREFIX}/.__compiler_compat_bak__" "${CONDA_PREFIX}/compiler_compat"
+    fi
+  }
+  trap _restore_compiler_compat EXIT
+
+  export TCNN_CUDA_ARCHITECTURES="${TCNN_CUDA_ARCHITECTURES:-75;80;86}"
+  export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6}"
+  export MAX_JOBS="${MAX_JOBS:-4}"
+
+  pip install -v --no-build-isolation \
+    git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+
+  pip install -v --no-build-isolation \
+    git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110
+)
 
 echo "=== Установка дополнительных зависимостей ==="
+#
+# Важно для AOV-GS:
+# - SAM: segment-anything
+# - CLIP: open_clip_torch
+#
+pip install opencv-python-headless
 pip install open3d
 pip install tensorboardX
 pip install mmengine
@@ -124,7 +174,7 @@ pip install wandb
 pip install pytorch-msssim 
 pip install lpips 
 pip install torchmetrics 
-pip install korni
+pip install kornia
 pip install transformers 
 pip install accelerate 
 pip install safetensors 
@@ -133,10 +183,17 @@ pip install huggingface-hub
 pip install regex 
 pip install tokenizers 
 pip install natsort 
+pip install PyMCubes==0.1.4
 pip install imgviz
 pip install psutil 
 pip install hf-xet
 pip install fsspec 
+
+echo "=== Установка SAM + CLIP (AOV-GS semantic features) ==="
+pip install git+https://github.com/facebookresearch/segment-anything.git
+pip install open_clip_torch
+pip install timm
+pip install pillow
 
 echo ""
 echo "=== ПРОВЕРКА УСТАНОВКИ ==="
@@ -151,6 +208,8 @@ python -c "import torch_sparse; print('✓ torch-sparse: OK')"
 python -c "import habitat_sim; print('✓ habitat-sim: OK')"
 python -c "import tinycudann; print('✓ tiny-cuda-nn: OK')"
 python -c "import diff_gaussian_rasterization; print('✓ diff-gaussian-rasterization: OK')"
+python -c "import segment_anything; print('✓ SAM (segment-anything): OK')"
+python -c "import open_clip; print('✓ open_clip_torch: OK')"
 
 echo ""
 echo "=== УСПЕШНО! Окружение active-sgm готово ==="
@@ -167,6 +226,8 @@ echo "  ✓ torch-scatter & torch-sparse"
 echo "  ✓ CUDA C++ Standard Library (CCCL) 11.7"
 echo "  ✓ tiny-cuda-nn"
 echo "  ✓ diff-gaussian-rasterization-w-depth"
+echo "  ✓ SAM (segment-anything)"
+echo "  ✓ CLIP (open_clip_torch)"
 echo ""
 echo "ВСЁ В ОДНОМ ОКРУЖЕНИИ БЕЗ СИСТЕМНОЙ CUDA!"
 
