@@ -6,14 +6,12 @@ EN: ``traj.txt`` stores absolute RDF camera-to-world poses in the same world fra
 training ``data/Replica/<scene>/traj.txt``.  To recover the Habitat/RUB pose, simply negate
 columns 1 and 2 (Y and Z axes) of the stored matrix.
 
-RU: Рендер одного кадра Habitat по строке из ``traj.txt``. Позы хранятся в абсолютной системе
-координат RDF (та же, что у тренировочного ``traj.txt``).  Для рендера в Habitat нужно инвертировать
-оси Y и Z.  Сохраняются два варианта: ``*_raw`` — порядок строк как из симулятора; ``*_dataset`` —
-после ``np.flipud``, как ``frame*.jpg`` при генерации.
+RU: Рендер одного кадра Habitat по строке из ``traj.txt``. Позы в RDF; для Habitat инвертируются
+оси Y и Z.  Оба файла ``*_raw`` и ``*_dataset`` — один и тот же кадр: ``HabitatSim.simulate`` уже
+нормализует строки (``pinhole_vertical_flip`` в ``habitat.py``), как при генерации ``frame*.jpg``.
 
-EN (orientation): ``*_raw`` is the tensor row order from Habitat/OpenGL; many viewers show it
-flipped vertically vs. a normal photo. ``*_dataset`` matches ``generate_Replica_NVS_data`` (flipud
-when saving). Use ``*_dataset`` to compare with on-disk training RGB — not ``*_raw``.
+EN: Both outputs are identical upright RGB matching ``generate_Replica_NVS_data`` / training JPGs
+(simulator applies ``pinhole_vertical_flip`` from ``habitat.py``).
 
 Example / Пример::
 
@@ -115,10 +113,8 @@ def main() -> None:
         raise RuntimeError("Simulator returned no color.")
 
     h, w = color.shape[:2]
-    bgr_raw = (color.cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
-    bgr_raw = cv2.cvtColor(bgr_raw, cv2.COLOR_RGB2BGR)
-
-    bgr_ds = np.flipud(bgr_raw).copy()
+    bgr = (color.cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
+    bgr = cv2.cvtColor(bgr, cv2.COLOR_RGB2BGR)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,11 +122,11 @@ def main() -> None:
     suf = out_path.suffix if out_path.suffix else ".png"
     raw_p = f"{stem}_raw{suf}"
     ds_p = f"{stem}_dataset{suf}"
-    cv2.imwrite(str(raw_p), bgr_raw)
-    cv2.imwrite(str(ds_p), bgr_ds)
+    cv2.imwrite(str(raw_p), bgr)
+    cv2.imwrite(str(ds_p), bgr)
 
-    print(f"Saved (*_raw = sim row order; may look upside-down in viewers): {raw_p}")
-    print(f"Saved (*_dataset = flipud, matches frame*.jpg / training): {ds_p}")
+    print(f"Saved (upright RGB; raw and dataset are identical): {raw_p}")
+    print(f"Saved (duplicate stem for backward compatibility): {ds_p}")
     print(f"pose_idx={args.pose_idx}  image size {w}x{h}")
 
 

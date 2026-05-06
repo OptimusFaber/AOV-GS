@@ -5,13 +5,13 @@ Pipeline
 --------
 1. Score every Gaussian: cosine_sim(lang_feat, CLIP_text_query_encoded_via_AE).
 2. Take top-percentile Gaussians as candidates.
-3. DBSCAN-cluster their 3D positions → find semantic clusters.
-4. Best cluster = highest total relevancy score.
+3. DBSCAN-cluster their 3D positions → find semantic clusters (optional ``--no_clusters``).
+4. Rank clusters by mean/total/max score (``--cluster_rank_by``; default **mean** — не только «самый большой» кластер).
 5. Pick a view from **either** ``--poses`` (JSON keyframes) **or** auto-sampled poses
    inside the Gaussian hull (``--poses`` omitted): **checkpoint is never used** for
-   trajectory; synthetic cameras look at each cluster centroid from valid interior
-   positions.
-6. Render RGB + relevancy heatmap + overlay from those poses.
+   trajectory; with ``--pose_select relevancy`` the pose is scored by the relevancy map
+   (default ``--pose_score_mode global_topmean``, не только патч у проекции центроида).
+6. Render RGB + relevancy heatmap + overlay; SAM point from relevancy peak/COM by default.
 7. Save 3D scatter map showing all clusters.
 
 Usage
@@ -126,6 +126,24 @@ def find_clusters(means3d: np.ndarray,       # [K, 3]  top-% Gaussian positions
         })
     clusters.sort(key=lambda c: -c['total_score'])
     return clusters
+
+
+def rank_clusters_by(clusters: list[dict], rank_by: str) -> None:
+    """
+    Re-order clusters after DBSCAN (or single-cluster mode).
+
+    ``total`` — сумма cos×opacity по гауссианам (крупные объекты побеждают).
+    ``mean`` — средний скор (лучше для «какой объект лучше всего подходит»).
+    ``max`` — макс. скор в кластере (пик уверенности).
+    """
+    if rank_by == 'mean':
+        clusters.sort(key=lambda c: -(c['total_score'] / max(1, c['size'])))
+    elif rank_by == 'max':
+        clusters.sort(key=lambda c: -float(np.max(c['scores'])))
+    elif rank_by == 'total':
+        clusters.sort(key=lambda c: -c['total_score'])
+    else:
+        raise ValueError(f'unknown cluster rank_by: {rank_by!r}')
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +754,59 @@ def _patch_mean(sim_np: np.ndarray, xi: int, yi: int, patch_radius: int) -> floa
     return float(np.mean(sim_np[y0:y1, x0:x1]))
 
 
+def _score_sim_map(
+    sim_np: np.ndarray,
+    score_mode: str,
+    *,
+    xi: int,
+    yi: int,
+    patch_radius: int,
+    top_frac: float,
+) -> float:
+    """
+    Скаляр для ранжирования позы по карте сырого cos (после blur как в рендере).
+
+    ``centroid_patch`` — среднее в окне у проекции 3D-центроида (старое поведение).
+    ``global_mean`` — среднее по всему кадру.
+    ``global_topmean`` — среднее по верхнему ``top_frac`` пикселей (устойчиво к фону).
+    """
+    if score_mode == 'centroid_patch':
+        return _patch_mean(sim_np, xi, yi, patch_radius)
+    if score_mode == 'global_mean':
+        return float(np.mean(sim_np))
+    if score_mode == 'global_topmean':
+        flat = sim_np.astype(np.float64, copy=False).ravel()
+        k = max(1, int(round(float(top_frac) * flat.size)))
+        top = np.partition(flat, -k)[-k:]
+        return float(np.mean(top))
+    raise ValueError(f'unknown pose_score_mode: {score_mode!r}')
+
+
+def _centroid_in_front_only(
+    centroid: np.ndarray,
+    w2c: torch.Tensor,
+    intrinsics: torch.Tensor,
+    device: torch.device,
+    z_min: float,
+) -> tuple[bool, float, int, int]:
+    """Центроид перед камерой (z>=z_min); xi,yi — проекция (могут быть вне кадра)."""
+    pt = torch.tensor([*centroid, 1.0], dtype=torch.float32, device=device)
+    cam = w2c @ pt
+    z = cam[2].item()
+    if z < z_min:
+        return False, 0.0, 0, 0
+    fx = intrinsics[0, 0].item()
+    fy = intrinsics[1, 1].item()
+    cx_img = intrinsics[0, 2].item()
+    cy_img = intrinsics[1, 2].item()
+    x_proj = cam[0].item() / z * fx + cx_img
+    y_proj = cam[1].item() / z * fy + cy_img
+    dist2 = (x_proj - cx_img) ** 2 + (y_proj - cy_img) ** 2
+    xi = int(round(x_proj))
+    yi = int(round(y_proj))
+    return True, float(dist2), xi, yi
+
+
 def best_pose_by_query_relevancy(
     centroid: np.ndarray,
     poses: dict[int, torch.Tensor],
@@ -754,18 +825,22 @@ def best_pose_by_query_relevancy(
     allowed_pose_ids: set[int] | None,
     blur_sigma: float,
     patch_radius: int,
+    score_mode: str = 'global_topmean',
+    top_frac: float = 0.05,
     exclude_fids: set[int] | None = None,
     min_gravity: float | None = 0.12,
 ) -> tuple[int | None, torch.Tensor | None]:
     """
-    Among in-scene keyframes where the cluster centroid projects in front of the camera,
-    pick the pose that **maximises mean raw cosine** in a patch around the projected
-    centroid. Secondary: upright gravity alignment, then image-centre distance.
+    Среди поз, где центроид кластера перед камерой (и для ``centroid_patch`` ещё и
+    внутри поля зрения с отступом), выбираем кадр с максимальным скором по карте
+    ``cos(decoded latent, CLIP text)`` (см. ``score_mode``).
 
-    ``exclude_fids``: do not reuse these frame ids (so different clusters get
-    different poses when enough keyframes exist).
+    По умолчанию ``global_topmean``: сравниваем верхнюю долю пикселей кадра — так
+    выбор устойчивее, чем одно окно у проекции центроида, если 3D-центроид промахивается.
 
-    ``min_gravity``: drop upside-down poses (Y-up); relaxed automatically if no candidate.
+    ``exclude_fids``: не переиспользовать эти frame_id (другие кластеры).
+
+    ``min_gravity``: отсекаем перевёрнутые камеры (Y-up); при отсутствии кандидатов ослабляем.
     """
     if allowed_pose_ids is not None and len(allowed_pose_ids) == 0:
         return None, None
@@ -817,16 +892,26 @@ def best_pose_by_query_relevancy(
             if gravity_floor is not None and grav < gravity_floor:
                 continue
 
-            ok, _xp, _yp, dist2, xi, yi = _geo_ok(w2c)
-            if not ok:
-                continue
+            if score_mode == 'centroid_patch':
+                ok, _xp, _yp, dist2, xi, yi = _geo_ok(w2c)
+                if not ok:
+                    continue
+            else:
+                ok_front, dist2, xi, yi = _centroid_in_front_only(
+                    centroid, w2c, intrinsics, device, z_min,
+                )
+                if not ok_front:
+                    continue
 
             if fid not in sim_cache:
                 sim_cache[fid] = _render_raw_cosine_map(
                     model, clip_query, ae, w2c, H, W, device, blur_sigma,
                 )
             sim_np = sim_cache[fid]
-            sc = _patch_mean(sim_np, xi, yi, patch_radius)
+            sc = _score_sim_map(
+                sim_np, score_mode,
+                xi=xi, yi=yi, patch_radius=patch_radius, top_frac=top_frac,
+            )
             out.append((sc, grav, dist2, fid, w2c))
         return out
 
@@ -910,7 +995,7 @@ def render_relevancy_map(
     heatmap_p_low: float = 8.0,
     heatmap_p_high: float = 98.0,
     blur_sigma: float = 3.0,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Render D-dim latent field, decode each pixel to 512d, compute cosine
     with CLIP text embedding.  Comparing in 512d (not latent) is more
@@ -920,7 +1005,8 @@ def render_relevancy_map(
     normalization — this suppresses isolated speckle from alpha-composited
     multi-Gaussian pixels while keeping spatially-coherent object blobs.
 
-    Returns (jet heatmap BGR, float32 [H,W] in [0,1]).
+    Returns (jet heatmap BGR, float32 [H,W] normalized to [0,1] for viz,
+    float32 [H,W] raw cosine after blur — для SAM/пика relevancy).
     """
     with torch.no_grad():
         rendered = model.render_lang(w2c, H, W)          # [D, H, W]
@@ -947,7 +1033,7 @@ def render_relevancy_map(
 
     norm = _normalize_relevancy_map(sim_np, heatmap_norm, heatmap_p_low, heatmap_p_high)
     jet = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    return jet, norm
+    return jet, norm, sim_np.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +1058,44 @@ def project_centroid(centroid: np.ndarray,    # [3] world
     x = int(round(cam[0].item() / z * fx + cx))
     y = int(round(cam[1].item() / z * fy + cy))
     return x, y
+
+
+def sam_prompt_xy_from_relevancy(
+    sim_raw: np.ndarray,
+    mode: str,
+    centroid_xy: tuple[int, int] | None,
+    H: int,
+    W: int,
+    *,
+    com_top_frac: float = 0.12,
+) -> tuple[int, int] | None:
+    """
+    Точка для SAM: проекция 3D-центроида или пик / центр масс по сырой карте cos
+    (после blur, как в ``render_relevancy_map``).
+    """
+    if mode == 'centroid':
+        if centroid_xy is None:
+            mode = 'relevancy_com'
+        else:
+            x, y = centroid_xy
+            return max(0, min(W - 1, int(x))), max(0, min(H - 1, int(y)))
+    if mode == 'relevancy_peak':
+        yi, xi = np.unravel_index(np.argmax(sim_raw), sim_raw.shape)
+        return max(0, min(W - 1, int(xi))), max(0, min(H - 1, int(yi)))
+    if mode == 'relevancy_com':
+        flat = sim_raw.ravel()
+        k = max(1, int(round(float(com_top_frac) * flat.size)))
+        thr = np.partition(flat.astype(np.float64, copy=False), -k)[-k]
+        mask = sim_raw >= thr
+        ys, xs = np.where(mask)
+        if len(ys) == 0:
+            yi, xi = np.unravel_index(np.argmax(sim_raw), sim_raw.shape)
+        else:
+            w = sim_raw[ys, xs].astype(np.float64)
+            xi = int(np.round(np.average(xs, weights=w)))
+            yi = int(np.round(np.average(ys, weights=w)))
+        return max(0, min(W - 1, int(xi))), max(0, min(H - 1, int(yi)))
+    raise ValueError(f'unknown sam_prompt_from: {mode!r}')
 
 
 # SAM predictor is heavy — load it once and reuse
@@ -1153,10 +1277,39 @@ def parse_args() -> argparse.Namespace:
                    help='DBSCAN eps in scene units (default 0.15 m)')
     p.add_argument('--dbscan_min',        type=int,   default=30,
                    help='DBSCAN min_samples (default 30)')
+    p.add_argument('--no_clusters', action='store_true',
+                   help='Отключить DBSCAN и использовать один кластер из всего top-% набора.')
+    p.add_argument(
+        '--cluster_rank_by',
+        choices=('total', 'mean', 'max'),
+        default='mean',
+        help='Как упорядочить кластеры после DBSCAN: total — сумма скоров (крупные объекты), '
+             'mean — средний скор (лучше для «самого подходящего» объекта), '
+             'max — пиковый скор в кластере.',
+    )
+    p.add_argument(
+        '--gaussian_score_no_opacity',
+        action='store_true',
+        help='Ранжировать гауссианы по сырому cos(CLIP) без умножения на opacity '
+             '(иначе крупные полупрозрачные облака могут доминировать в top-%%).',
+    )
     p.add_argument('--top_k_views',       type=int,   default=3,
                    help='Save renders for top-K clusters (default 3)')
     p.add_argument('--sam_ckpt',          default='ckpts/sam_vit_b_01ec64.pth',
                    help='SAM checkpoint for semantic mask (default: vit_b)')
+    p.add_argument(
+        '--sam_prompt_from',
+        choices=('centroid', 'relevancy_peak', 'relevancy_com'),
+        default='relevancy_com',
+        help='Точка для SAM: проекция 3D-центроида или пик / центр масс по карте relevancy '
+             '(устойчивее, чем одна проекция центроида).',
+    )
+    p.add_argument(
+        '--sam_com_top_frac',
+        type=float,
+        default=0.12,
+        help='Для --sam_prompt_from relevancy_com: верхняя доля пикселей по cos для центра масс.',
+    )
     p.add_argument('--encoder_dims', nargs='+', type=int, default=None,
                    help='Размерности энкодера AE (должны совпадать с train_language_autoencoder.py). '
                         'None = использовать дефолты класса Autoencoder (64d).')
@@ -1187,16 +1340,28 @@ def parse_args() -> argparse.Namespace:
         '--pose_select',
         choices=('relevancy', 'centroid'),
         default='relevancy',
-        help='Как выбрать keyframe для рендера кластера: relevancy = макс. сырой cos '
-             'запроса в окне у проекции центроида (зависит от текста); '
-             'centroid = только геометрия (центроид ближе к центру кадра) — у разных '
-             'запросов часто одна и та же поза.',
+        help='Как выбрать позу для рендера кластера: relevancy — по карте cos (см. '
+             '--pose_score_mode); centroid — только геометрия (центроид ближе к центру кадра).',
+    )
+    p.add_argument(
+        '--pose_score_mode',
+        choices=('centroid_patch', 'global_mean', 'global_topmean'),
+        default='global_topmean',
+        help='При --pose_select relevancy: как агрегировать карту cos по кадру. '
+             'global_topmean (по умолчанию) — среднее по верхнему %% пикселей (устойчиво); '
+             'centroid_patch — окно у проекции 3D-центроида (старое поведение).',
+    )
+    p.add_argument(
+        '--pose_score_top_frac',
+        type=float,
+        default=0.05,
+        help='Доля пикселей для global_topmean (верхняя часть распределения cos).',
     )
     p.add_argument(
         '--pose_patch_radius',
         type=int,
         default=10,
-        help='Полуразмер окна (px) для усреднения cos при --pose_select relevancy.',
+        help='Полуразмер окна (px) для centroid_patch при --pose_select relevancy.',
     )
     p.add_argument(
         '--pose_reuse_across_clusters',
@@ -1369,11 +1534,19 @@ def main() -> None:
     clip_query = encode_query_clip(
         args.text, args.clip_model, args.clip_pretrained, device)  # [512]
     print(f'Query: "{args.text}"')
-    print(f'Pose selection: {args.pose_select}  (patch_radius={args.pose_patch_radius})')
+    print(
+        f'Pose selection: {args.pose_select}  '
+        f'(pose_score_mode={args.pose_score_mode}, top_frac={args.pose_score_top_frac}, '
+        f'patch_radius={args.pose_patch_radius})'
+    )
+    print(
+        f'Cluster rank: {args.cluster_rank_by}  |  '
+        f'Gaussian score: {"raw cos (no opacity)" if args.gaussian_score_no_opacity else "cos × opacity"}'
+    )
 
     # Score all Gaussians in 512d: decode latent → CLIP space, then cosine.
-    # Multiply by sigmoid(logit_opacity) so nearly-transparent floaters (which
-    # contribute little to renders but pollute the top-percentile) are downweighted.
+    # По умолчанию умножаем на sigmoid(opacity), чтобы почти прозрачные выбросы
+    # не забирали top-percentile; опционально — сырой cos для более «семантического» ранжирования.
     with torch.no_grad():
         lang = model.lang_feats.detach()                            # [N, D]
         opacity = torch.sigmoid(
@@ -1388,7 +1561,11 @@ def main() -> None:
             chunk_512 = ae.decode(chunk_lat)                        # [B, 512]
             chunk_512 = F.normalize(chunk_512, dim=-1).to(torch.float32)
             cos = (chunk_512 @ q).clamp(min=0.0)                    # [B]
-            sc = (cos * opacity[i : i + cos.shape[0]].to(torch.float32)).cpu().numpy()
+            op = opacity[i : i + cos.shape[0]].to(torch.float32)
+            if args.gaussian_score_no_opacity:
+                sc = cos.cpu().numpy()
+            else:
+                sc = (cos * op).cpu().numpy()
             scores[i : i + sc.shape[0]] = sc
 
     # Take top-percentile
@@ -1399,16 +1576,35 @@ def main() -> None:
     print(f'Top-{args.top_percentile}%: {mask.sum()} Gaussians  '
           f'score range [{top_scores.min():.4f}, {top_scores.max():.4f}]')
 
-    # DBSCAN clustering
-    clusters = find_clusters(top_means, top_scores,
-                             eps=args.dbscan_eps, min_samples=args.dbscan_min)
-    if not clusters:
-        print('No clusters found. Try --dbscan_eps larger or --top_percentile larger.')
-        return
-    print(f'Found {len(clusters)} cluster(s):')
+    # Clustering (DBSCAN by default; optional single-cluster mode).
+    if args.no_clusters:
+        centroid = top_means.mean(axis=0)
+        if top_scores.sum() > 1e-12:
+            # Weighted centroid is usually more stable for semantic peaks.
+            centroid = (top_means * top_scores[:, None]).sum(axis=0) / (top_scores.sum() + 1e-12)
+        clusters = [{
+            'label': 0,
+            'centroid': centroid,
+            'total_score': float(top_scores.sum()),
+            'size': int(top_means.shape[0]),
+            'means3d': top_means,
+            'scores': top_scores,
+        }]
+        print('Clustering: disabled (--no_clusters), using single aggregated cluster.')
+    else:
+        clusters = find_clusters(top_means, top_scores,
+                                 eps=args.dbscan_eps, min_samples=args.dbscan_min)
+        if not clusters:
+            print('No clusters found. Try --dbscan_eps larger or --top_percentile larger.')
+            return
+
+    rank_clusters_by(clusters, args.cluster_rank_by)
+    print(f'Found {len(clusters)} cluster(s), ordered by {args.cluster_rank_by}:')
     for i, cl in enumerate(clusters[:6]):
+        _mean = float(cl['total_score']) / max(1, cl['size'])
         print(f'  cluster {i+1}: size={cl["size"]}  '
-              f'score={cl["total_score"]:.1f}  centroid={cl["centroid"].round(3)}')
+              f'total={cl["total_score"]:.1f}  mean={_mean:.4f}  '
+              f'centroid={cl["centroid"].round(3)}')
 
     # Camera world positions for visualisation (keyframes or auto-sampled centres)
     if poses_synthetic:
@@ -1483,6 +1679,8 @@ def main() -> None:
                 allowed_pose_ids=allowed_pose_ids,
                 blur_sigma=args.heatmap_blur,
                 patch_radius=args.pose_patch_radius,
+                score_mode=args.pose_score_mode,
+                top_frac=args.pose_score_top_frac,
                 exclude_fids=excl,
                 min_gravity=min_grav,
             )
@@ -1516,6 +1714,11 @@ def main() -> None:
             "dbscan_eps": float(args.dbscan_eps),
             "dbscan_min": int(args.dbscan_min),
             "pose_select": str(args.pose_select),
+            "pose_score_mode": str(args.pose_score_mode),
+            "pose_score_top_frac": float(args.pose_score_top_frac),
+            "cluster_rank_by": str(args.cluster_rank_by),
+            "gaussian_score_no_opacity": bool(args.gaussian_score_no_opacity),
+            "sam_prompt_from": str(args.sam_prompt_from),
             "clusters_found": int(len(clusters)),
             "clusters_saved": int(n_save),
             "clusters": [
@@ -1593,7 +1796,8 @@ def main() -> None:
         print(f'  upright (Y-up heuristic)={_gstr}  (if always wrong, try --no_pose_gravity_filter)')
 
         rgb     = render_rgb(model, w2c, H, W)
-        jet, _  = render_relevancy_map(model, clip_query, ae, w2c, H, W, **rmap_kw)
+        jet, _norm, sim_raw = render_relevancy_map(
+            model, clip_query, ae, w2c, H, W, **rmap_kw)
         overlay = cv2.addWeighted(rgb, 0.55, jet, 0.45, 0)
 
         # --- _semantic: SAM auto masks + query cluster on top in green ---
@@ -1608,10 +1812,18 @@ def main() -> None:
             color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
             sem = _apply_mask(sem, mask2d, color_bgr, alpha=0.35)
 
-        # 2) Query cluster on top — green, via point prompt
-        pt_xy = project_centroid(
+        # 2) Query cluster on top — green, via point prompt (пик relevancy или центроид)
+        centroid_xy = project_centroid(
             cd_target['cl']['centroid'], w2c, model.intrinsics, device)
-        if pt_xy is not None and 0 <= pt_xy[0] < W and 0 <= pt_xy[1] < H:
+        pt_xy = sam_prompt_xy_from_relevancy(
+            sim_raw,
+            args.sam_prompt_from,
+            centroid_xy,
+            H,
+            W,
+            com_top_frac=args.sam_com_top_frac,
+        )
+        if pt_xy is not None:
             query_mask = sam_mask_from_point(rgb, pt_xy, args.sam_ckpt, device)
         else:
             query_mask = np.zeros((H, W), dtype=np.uint8)
@@ -1640,7 +1852,8 @@ def main() -> None:
         best_w2c = cluster_data[0]['w2c'] if cluster_data[0]['w2c'] is not None else next(
             cd['w2c'] for cd in cluster_data if cd['w2c'] is not None)
         rgb_best = render_rgb(model, best_w2c, H, W)
-        jet_best, _ = render_relevancy_map(model, clip_query, ae, best_w2c, H, W, **rmap_kw)
+        jet_best, _nb, _sr = render_relevancy_map(
+            model, clip_query, ae, best_w2c, H, W, **rmap_kw)
         auto_best = sam_all_masks(rgb_best, args.sam_ckpt, device)
         sem_best = rgb_best.copy()
         for i, mask2d in enumerate(auto_best):
