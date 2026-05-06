@@ -12,10 +12,21 @@
 #
 # Примеры:
 #   bash scripts/activesgm/03_train_gaussian_lang_field.sh \
-#       results/Replica/office0/ActiveOpenVocab/run_0 64
+#       results/Replica/office0/ActiveOpenSem/run_0 64
 #
 #   bash scripts/activesgm/03_train_gaussian_lang_field.sh \
-#       results/Replica/room0/ActiveOpenVocab/run_0 3 s 30000 cuda:1 auto
+#       results/Replica/room0/ActiveOpenSem/run_0 3 s 30000 cuda:1 auto
+#
+# Все уровни SAM подряд (s → m → l):
+#   bash scripts/activesgm/03_train_gaussian_lang_field_all_levels.sh \
+#       results/Replica/office0/ActiveOpenSem/run_0 64 12000
+#
+# nohup важно оборачивать всю цепочку в bash -c '...', иначе nohup действует только на первый вызов:
+#   cd /path/to/AOV-GS
+#   nohup bash -c 'bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 s 12000 && \
+#                  bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 m 12000 && \
+#                  bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 l 12000' \
+#       > train_lang_field.log 2>&1 &
 #
 # Аргументы:
 #   RESULT_DIR         – папка с результатами SLAM (обязательный)

@@ -11,7 +11,7 @@ This is a small wrapper around `scripts/eval_language_autoencoder.py` that:
 
 Example:
   python scripts/activesgm/eval_run_autoencoders.py \
-    --result_dir results/Replica/office0/ActiveOpenVocab/run_0 \
+    --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
     --scene_name office0 \
     --queries "a sofa" "a table" "a window" "the chair" \
     --feature_level 1 \
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--result_dir",
         required=True,
-        help="Path like results/Replica/office0/ActiveOpenVocab/run_0",
+        help="Path like results/Replica/office0/ActiveOpenSem/run_0",
     )
     p.add_argument(
         "--scene_name",

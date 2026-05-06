@@ -13,19 +13,24 @@
 # Использование:
 #   bash scripts/activesgm/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]
 #
+#   ENABLE_VIS: 0 = без окон OpenCV (RGB-D), 1 = показать live-визуализацию (нужен дисплей / X11)
+#   DEBUG:      1 = дополнительно писать keyframes/ и segmentframes/
+#
 # Примеры:
 #   bash scripts/activesgm/01_slam_exploration.sh
 #   bash scripts/activesgm/01_slam_exploration.sh office0
-#   bash scripts/activesgm/01_slam_exploration.sh office0 ActiveOpenVocab 0 0 1
+#   bash scripts/activesgm/01_slam_exploration.sh office0 ActiveOpenSem 0 0 1
+#   # визуализация RGB-D + debug:
+#   bash scripts/activesgm/01_slam_exploration.sh office0 ActiveOpenSem 0 1 1
 ##################################################
 
 set -e
 
 SCENE=${1:-office0}
-EXP=${2:-ActiveOpenVocab}
+EXP=${2:-ActiveOpenSem}
 SEED=${3:-0}
-ENABLE_VIS=${4:-0}
-DEBUG=${5:-0}          # 1 = сохранять keyframes/ как JPEG
+ENABLE_VIS=${4:-0}   # 1 = --enable_vis 1 → main_cfg.visualizer.vis_rgbd = True (окна OpenCV)
+DEBUG=${5:-0}        # 1 = сохранять keyframes/ как JPEG
 
 export CUDA_VISIBLE_DEVICES=0,1
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

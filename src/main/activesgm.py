@@ -332,7 +332,7 @@ if __name__ == "__main__":
                     if _debug_save_kf:
                         import cv2
                         kf_np = (kf['color'].permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-                        kf_np = np.ascontiguousarray(np.flipud(kf_np))
+                        kf_np = np.ascontiguousarray(kf_np)
                         cv2.imwrite(
                             os.path.join(_debug_kf_dir, f"frame_{kf_id:06d}.jpg"),
                             cv2.cvtColor(kf_np, cv2.COLOR_RGB2BGR),
@@ -448,10 +448,6 @@ if __name__ == "__main__":
                             save_frames=False,
                             max_frames=max_frames,
                         )
-                        # Save Gaussian checkpoint alongside eval
-                        if hasattr(slam, 'save_checkpoint'):
-                            slam.save_checkpoint(eval_suffix)
-                        # Save CLIP index alongside eval
                         if open_vocab_index is not None and len(open_vocab_index) > 0:
                             open_vocab_index.save(clip_index_path)
                         info_printer(f"Validation completed at step {i+1}", i+1, "Validation")
@@ -511,15 +507,6 @@ if __name__ == "__main__":
             f"CLIP index saved: {len(open_vocab_index)} keyframes → {clip_index_path}",
             0, "CLIP"
         )
-
-    ##################################################
-    ### Cleanup: remove visualization folder (not needed for pipeline)
-    ##################################################
-    import shutil
-    _vis_dir = os.path.join(main_cfg.dirs.result_dir, "visualization")
-    if os.path.isdir(_vis_dir):
-        shutil.rmtree(_vis_dir)
-        info_printer(f"Removed visualization folder: {_vis_dir}", 0, "Cleanup")
 
     ##################################################
     ### Runtime Analysis

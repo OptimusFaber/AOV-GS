@@ -23,18 +23,18 @@
 #
 # Примеры:
 #   bash scripts/activesgm/02_train_clip_autoencoder.sh \
-#       results/Replica/office0/ActiveOpenVocab/run_0 64
+#       results/Replica/office0/ActiveOpenSem/run_0 64
 #
 #   bash scripts/activesgm/02_train_clip_autoencoder.sh \
-#       results/Replica/office0/ActiveOpenVocab/run_0 4 100 cuda:0
+#       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0
 #
 #   # Своя архитектура: 512 → 128 → 4
 #   bash scripts/activesgm/02_train_clip_autoencoder.sh \
-#       results/Replica/office0/ActiveOpenVocab/run_0 4 100 cuda:0 "128"
+#       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0 "128"
 #
 #   # Своя архитектура: 512 → 256 → 32 → 4
 #   bash scripts/activesgm/02_train_clip_autoencoder.sh \
-#       results/Replica/room0/ActiveOpenVocab/run_0 4 200 cuda:1 "256 32"
+#       results/Replica/room0/ActiveOpenSem/run_0 4 200 cuda:1 "256 32"
 ##################################################
 
 set -e

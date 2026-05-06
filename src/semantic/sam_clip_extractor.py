@@ -59,23 +59,18 @@ def _to_uint8_numpy(color: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
 
 
 def _habitat_rgb_for_sam(image_rgb: np.ndarray) -> np.ndarray:
-    """Habitat/OpenGL порядок строк → как у обычного изображения (для SAM и debug JPG)."""
-    return np.ascontiguousarray(np.flipud(image_rgb))
+    """RGB уже в порядке строк OpenCV (симулятор: ``pinhole_vertical_flip`` в ``habitat.py``)."""
+    return np.ascontiguousarray(image_rgb)
 
 
-def _sam_masks_to_habitat(masks: list, H: int) -> list:
-    """
-    Маски от SAM, полученные на flipud(image), переводим обратно в индексацию строк
-    исходного тензора Habitat (как в SLAM / _s.npy).
-    """
+def _sam_masks_to_habitat(masks: list) -> list:
+    """Маски SAM в той же индексации строк, что и тензоры SLAM / датасет."""
     out: list = []
     for m in masks:
         mc = dict(m)
         seg = np.asarray(m["segmentation"], dtype=bool)
-        mc["segmentation"] = np.ascontiguousarray(np.flipud(seg))
-        x, y, w, h = np.asarray(m["bbox"], dtype=np.float64).ravel()[:4].tolist()
-        y_h = float(H) - float(y) - float(h)
-        mc["bbox"] = np.array([x, y_h, w, h], dtype=np.float64)
+        mc["segmentation"] = np.ascontiguousarray(seg)
+        mc["bbox"] = np.asarray(m["bbox"], dtype=np.float64)
         out.append(mc)
     return out
 
@@ -419,10 +414,9 @@ class SAMCLIPExtractor:
             logger.debug("Frame %d already processed, skipping.", frame_id)
             return
 
-        image_rgb = _to_uint8_numpy(color)  # (H, W, 3) uint8 RGB, строки как в Habitat
+        image_rgb = _to_uint8_numpy(color)  # (H, W, 3) uint8 RGB, row 0 = top
         H, W = image_rgb.shape[:2]
 
-        # SAM на «перевёрнутом» кадре (как у человеческого JPG); маски потом в habitat-строки.
         image_rgb_sam = _habitat_rgb_for_sam(image_rgb)
         image_bgr_sam = cv2.cvtColor(image_rgb_sam, cv2.COLOR_RGB2BGR)
         masks_all_sam = self._mask_generator.generate(image_bgr_sam)
@@ -439,7 +433,7 @@ class SAMCLIPExtractor:
                 :self.max_masks_per_frame
             ]
 
-        masks_all = _sam_masks_to_habitat(masks_all_sam, H)
+        masks_all = _sam_masks_to_habitat(masks_all_sam)
 
         # Debug: overlay в той же ориентации, что и SAM (читаемый segmentframes/)
         if self.debug_dir is not None and masks_all_sam:

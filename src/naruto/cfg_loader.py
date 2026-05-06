@@ -96,8 +96,14 @@ def argument_parsing() -> argparse.Namespace:
     parser.add_argument("--scene", type=str, default=None,
                         help="Override scene name (e.g., office0).")
     parser.add_argument("scene_positional", nargs="?", default=None,
-                        help="Scene name as positional arg (e.g., office0).")
+                        help="Scene name as positional arg (e.g., office0), OR pass path/to/config.py (same as --cfg).")
     args = parser.parse_args()
+    # `python activesgm.py configs/.../foo.py` — users often omit `--cfg`; first positional is then
+    # a config file, not a scene name. Without this, load_cfg() treats it as `args.scene` and breaks
+    # dirs.cfg_dir (e.g. .../ActiveOpenSem.py/habitat.py).
+    if args.scene_positional and str(args.scene_positional).endswith(".py"):
+        args.cfg = args.scene_positional
+        args.scene_positional = None
     # Merge positional scene into named scene if provided
     if args.scene is None and args.scene_positional is not None:
         args.scene = args.scene_positional
