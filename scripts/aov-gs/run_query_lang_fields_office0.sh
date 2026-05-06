@@ -11,7 +11,7 @@
 # Usage:
 #   cd New-Proj
 #   bash scripts/activesgm/run_query_lang_fields_office0.sh \
-#     results/Replica/office0/ActiveOpenVocab/run_0
+#     results/Replica/office0/ActiveOpenSem/run_0
 #
 # Env (optional):
 #   DEVICE=cuda:0

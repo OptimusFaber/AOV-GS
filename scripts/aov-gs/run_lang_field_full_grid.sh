@@ -19,7 +19,7 @@
 # Использование:
 #   cd New-Proj
 #   bash scripts/activesgm/run_lang_field_full_grid.sh \
-#       results/Replica/office0/ActiveOpenVocab/run_0
+#       results/Replica/office0/ActiveOpenSem/run_0
 #
 # Env:
 #   NUM_ITERS_SMALL=30000   # для D=3,4,8,16
