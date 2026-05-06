@@ -12,14 +12,14 @@
 ###   bash scripts/evaluation/validate_clip_nav.sh [SCENE] [EXP] [RUN] [DEVICE]
 ###
 ### Examples:
-###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveSem-CLIP 0 cuda:0
-###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveSem-CLIP bench_clip cuda:0
+###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem 0 cuda:0
+###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem bench_clip cuda:0
 ###   # Без GUI (сервер/headless):
-###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveSem-CLIP 0 cuda:0 --headless
+###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem 0 cuda:0 --headless
 ##################################################
 
 SCENE=${1:-office0}
-EXP=${2:-ActiveSem-CLIP}
+EXP=${2:-ActiveOpenSem}
 RUN=${3:-0}
 CLIP_DEVICE=${4:-cuda:0}
 EXTRA_ARGS="${@:5}"   # e.g. --headless

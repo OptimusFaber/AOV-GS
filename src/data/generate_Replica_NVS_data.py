@@ -24,6 +24,7 @@ SOFTWARE.
 
 import os
 import sys
+import shutil
 
 # Force headless Qt for OpenCV to avoid xcb display errors
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -238,6 +239,9 @@ if __name__ == "__main__":
     )
 
     new_data_dir = f"data/replica_sim_nvs/{main_cfg.general.scene}/results_habitat"
+    if os.path.isdir(new_data_dir):
+        print(f"[NVS] Clearing existing output dir: {new_data_dir}")
+        shutil.rmtree(new_data_dir)
     os.makedirs(new_data_dir, exist_ok=True)
     os.makedirs(f'{new_data_dir}/semantic', exist_ok=True)
     nvs_poses_slam = []
@@ -308,7 +312,7 @@ if __name__ == "__main__":
         ### Save Semantic ###
         if scene_id2label is not None and 'seman' in sim_out:
             seman = sim_out['seman'].long()
-            seman = map_object_id_to_semlabel(object_ids=sim_out['seman'], id2label=scene_id2label)
+            seman = map_object_id_to_semlabel(object_ids=seman, id2label=scene_id2label)
             sem_np = seman.detach().cpu().numpy()
             np.save(f"{new_data_dir}/semantic/semantic_map_{save_idx:04d}.npy", sem_np)
             seman_vis = torch.from_numpy(sem_np).long()

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Разовая правка уже сохранённых кадров Habitat: вертикальный flip (OpenGL Y-up → Y-down).
+Разовая правка уже сохранённых кадров (legacy): вертикальный flip.
+
+Для новых прогонов используйте ``pinhole_vertical_flip`` в ``configs/Replica/.../habitat.py`` и
+``HabitatSim.simulate`` — повторный flip здесь перевернёт кадры обратно.
 
 Обрабатывает в каталоге ``results_habitat`` (или аналоге):
   - ``frame*.jpg``

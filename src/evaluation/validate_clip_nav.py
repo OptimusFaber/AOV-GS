@@ -13,7 +13,7 @@ CLIP нужен только для кодирования текстового 
 Usage
 -----
   # Предпочтительно: только эмбеддинги из clip_index.pt (без keyframe-изображений)
-  python src/evaluation/validate_clip_nav.py --result_dir results/Replica/office0/ActiveSem-CLIP/run_bench_clip
+  python src/evaluation/validate_clip_nav.py --result_dir results/Replica/office0/ActiveOpenSem/run_bench_clip
 
   # Явный путь к .pt
   python src/evaluation/validate_clip_nav.py --clip_index results/.../splatam/clip_index.pt

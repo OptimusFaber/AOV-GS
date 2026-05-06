@@ -55,6 +55,13 @@ class HabitatSim(Simulator):
         super(HabitatSim, self).__init__(main_cfg, info_printer)
 
         cfg = mmengine.Config.fromfile(self.sim_cfg.habitat_cfg)
+        # Row 0 = image top (OpenCV / segmentation). Legacy: flip_pinhole_vertical.
+        self._pinhole_vertical_flip = bool(
+            cfg.simulator.get(
+                "pinhole_vertical_flip",
+                cfg.simulator.get("flip_pinhole_vertical", False),
+            )
+        )
 
         if disable_erp:
             cfg.camera.equirectangular.enable = False
@@ -79,6 +86,23 @@ class HabitatSim(Simulator):
         sim.step_physics(1.0)
         self.sim = sim
 
+    def _flip_tensor_hw(self, x: Union[torch.Tensor, None]) -> Union[torch.Tensor, None]:
+        if x is None or not self._pinhole_vertical_flip:
+            return x
+        return torch.flip(x, dims=(0,))
+
+    def _normalize_pinhole_observation(
+        self,
+        color: Union[torch.Tensor, None],
+        depth: Union[torch.Tensor, None],
+        seman: Union[torch.Tensor, None],
+    ):
+        return (
+            self._flip_tensor_hw(color),
+            self._flip_tensor_hw(depth),
+            self._flip_tensor_hw(seman),
+        )
+
     def simulate(self, 
                  c2w            : np.ndarray,
                  return_erp     : bool = False,
@@ -99,7 +123,7 @@ class HabitatSim(Simulator):
             return_semantic: return semantic map as well if true
 
         Returns:
-            Tuple: simulation outputs
+            Tuple: simulation outputs (row 0 = top when pinhole_vertical_flip in habitat.py).
                 - color (torch.Tensor, [H,W,3])    : pinhole color. Range        : 0-1
                 - depth (torch.Tensor, [H,W])      : pinhole depth
                 - seman (torch.Tensor, [H,W])      : semantic map
@@ -143,7 +167,9 @@ class HabitatSim(Simulator):
             # seman = seman[:, :, :3] / 255.
 
             seman = torch.from_numpy(seman.astype(np.float32))
-        
+
+        color, depth, seman = self._normalize_pinhole_observation(color, depth, seman)
+
         if return_erp:
             erp_color = obs.get('erp_color', None)
             erp_depth = obs.get('erp_depth', None)
@@ -164,7 +190,7 @@ class HabitatSim(Simulator):
                 # seman = apply_colormap(seman, colormap)
                 # seman = seman[:, :, :3] / 255.
 
-                seman = torch.from_numpy(seman.astype(np.float32))
+                erp_seman = torch.from_numpy(erp_seman.astype(np.float32))
             
             if return_semantic:
                 return color, depth, seman, erp_color, erp_depth, erp_seman
@@ -297,7 +323,8 @@ class HabitatSimV2(HabitatSim):
             return_semantic: return semantic mask
 
         Returns:
-            Dict: simulation outputs
+            Dict: simulation outputs (row 0 = top when pinhole_vertical_flip in habitat.py;
+                ERP pano tensors are not flipped — keeps ERPDepth2Dist row order).
                 - 'color' (torch.Tensor, [H,W,3])    : pinhole color. Range: 0-1
                 - 'depth' (torch.Tensor, [H,W])      : pinhole depth
                 - 'seman' (torch.Tensor, [H,W])      : semantic map
@@ -341,6 +368,8 @@ class HabitatSimV2(HabitatSim):
             # seman = seman[:, :, :3] / 255.
 
             seman = torch.from_numpy(seman.astype(np.float32))
+
+        color, depth, seman = self._normalize_pinhole_observation(color, depth, seman)
 
         if return_erp:
             erp_color = obs.get('erp_color', None)

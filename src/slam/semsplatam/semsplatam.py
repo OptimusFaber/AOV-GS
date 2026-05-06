@@ -265,9 +265,8 @@ class SemSplatam(SplatamOurs):
         _, seman = self.semantic_annotation(seg_img)
         seman = seman.to(self.device)
         
-        # Get intrinsics from dataset_sample (camera params don't change)
-        _, _, intrinsics, _ = self.dataset_sample[0]
-        intrinsics = intrinsics[:3, :3].to(self.device)
+        # Intrinsics from dataset metadata only; do not touch dataset frame 0.
+        intrinsics = self._get_scaled_camera_intrinsics()
         
         # Process data - ensure everything is on GPU
         color_processed = color.permute(2, 0, 1).to(self.device) / 255.0  # (H, W, 3) -> (3, H, W)
@@ -1119,10 +1118,10 @@ class SemSplatam(SplatamOurs):
                     os.path.join(self.main_cfg.dirs.result_dir, keyframes_extra_subdir)
                 )
             # Convert color from (C, H, W) to (H, W, C) and save as image.
-            # flipud: Habitat pinhole RGB is OpenGL-style row order; without it JPGs look upside-down.
+            # Row order matches dataset RGB (HabitatSim.simulate pinhole_vertical_flip in habitat.py).
             color_np = color.permute(1, 2, 0).detach().cpu().numpy()  # (H, W, 3)
             color_np = (color_np * 255).astype(np.uint8)
-            color_np = np.ascontiguousarray(np.flipud(color_np))
+            color_np = np.ascontiguousarray(color_np)
             color_bgr = cv2.cvtColor(color_np, cv2.COLOR_RGB2BGR)
             _fname = f"keyframe_{time_idx:04d}.jpg"
             for _kd in _kf_dirs:
@@ -1272,7 +1271,7 @@ class SemSplatam(SplatamOurs):
                 kf_color = kf['color']  # (C, H, W)
                 color_np = kf_color.permute(1, 2, 0).detach().cpu().numpy()  # (H, W, 3)
                 color_np = (color_np * 255).astype(np.uint8)
-                color_np = np.ascontiguousarray(np.flipud(color_np))
+                color_np = np.ascontiguousarray(color_np)
                 color_bgr = cv2.cvtColor(color_np, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(os.path.join(keyframes_dir, f"keyframe_{kf_id:04d}.jpg"), color_bgr)
 

@@ -121,21 +121,21 @@ if __name__ == "__main__":
         ### Save Depth ###
         depth_png_scale = 6553.5
         img_path = os.path.join(new_data_dir, 'depth{:06}.png'.format(i))
-        depth_np = np.flipud(depth.detach().cpu().numpy())
+        depth_np = depth.detach().cpu().numpy()
         depth_u16 = np.clip((depth_np * depth_png_scale), 0, 65535).astype(np.uint16)
         cv2.imwrite(img_path, depth_u16)
 
         ### Save RGB ###
         img_path = os.path.join(new_data_dir, 'frame{:06}.jpg'.format(i))
-        color = np.flipud(color.cpu().numpy())
+        color = color.cpu().numpy()
         color = (color * 255).astype(np.uint8)
         color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
         cv2.imwrite(img_path, color)
 
         ### Save Semantic ###
         seman = sim_out['seman'].long()
-        seman = map_object_id_to_semlabel(object_ids=sim_out['seman'], id2label=scene_id2label)
-        sem_np = np.flipud(seman.detach().cpu().numpy())
+        seman = map_object_id_to_semlabel(object_ids=seman, id2label=scene_id2label)
+        sem_np = seman.detach().cpu().numpy()
         np.save(f"{new_data_dir}/semantic/semantic_map_{i:04d}.npy", sem_np)
         seman_vis = torch.from_numpy(sem_np.copy()).long()
         seman_vis[seman_vis < 0] = 0

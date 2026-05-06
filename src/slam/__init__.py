@@ -57,10 +57,14 @@ def init_SLAM_model(main_cfg: mmengine.Config, info_printer: InfoPrinter, logger
         info_printer("Initialize semsplatam...", 0, "semsplatam")
         from src.slam.semsplatam.semsplatam import SemSplatam as SemsplaTAM
         slam = SemsplaTAM(main_cfg, info_printer, logger)
+    elif main_cfg.slam.method == "opensplatam":
+        info_printer("Initialize opensplatam (geometry SplaTAM, simulator init)...", 0, "opensplatam")
+        from src.slam.opensplatam.opensplatam import OpenSplatam
+        slam = OpenSplatam(main_cfg, info_printer, logger)
     elif main_cfg.slam.method == "sgsslam":
         info_printer("Initialize sgsslam...", 0, "sgsslam")
         from src.slam.sgsslam.sgsslam import SGSSLAMOurs as SGSSLAM
         slam = SGSSLAM(main_cfg, info_printer, logger)
     else:
-            assert False, f"SLAM choices: [coslam, splatam, semsplatam, sgsslam]. Current option: [{main_cfg.slam.method}]"
+            assert False, f"SLAM choices: [coslam, splatam, semsplatam, opensplatam, sgsslam]. Current option: [{main_cfg.slam.method}]"
     return slam

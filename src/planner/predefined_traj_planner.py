@@ -96,12 +96,8 @@ class PreTrajPlanner(Planner):
         # self.lookat_tgts = None
         self.sim2slam = sim2slam
 
-        # Accept both list and np.ndarray in config
-        up_dir_cfg = self.planner_cfg.up_dir
-        if isinstance(up_dir_cfg, list):
-            up_dir_sim = torch.from_numpy(np.array(up_dir_cfg)).float().to(self.sim2slam.device).unsqueeze(1)
-        else:
-            up_dir_sim = torch.from_numpy(up_dir_cfg).float().to(self.sim2slam.device).unsqueeze(1)
+        up = np.asarray(self.planner_cfg.up_dir, dtype=np.float32)
+        up_dir_sim = torch.from_numpy(up).to(self.sim2slam.device).unsqueeze(1)
         self.up_dir_slam = (self.sim2slam[:3, :3] @ up_dir_sim)[:, 0].cpu().numpy()
 
 

@@ -280,7 +280,7 @@ class SplatamOurs(SlamModel):
                 self.seperate_tracking_res = True
             else:
                 self.seperate_tracking_res = False
-        
+
         ### obtain sample dataset  ###
         self.dataset_sample = get_dataset(
             config_dict=gradslam_data_cfg,
@@ -346,18 +346,21 @@ class SplatamOurs(SlamModel):
             self.tracking_intrinsics = tracking_intrinsics[:3, :3]
 
     def init_camera_parameters(self):
-        """
-    
-        Attributes:
-            params: Splatam parameters
-            variables: Splatam variables
-            intrinsics: camera intrinsics
-            first_frame_w2c: first world to camera pose
-            cam
-            densify_intrinsics
-            densify_cam
-            tracking_cam
-            
+        """Initialize first-frame camera parameters / Gaussians from the on-disk dataset.
+
+        Loads the first RGB-D frame from ``config.data.basedir`` (e.g.
+        ``data/Replica/<scene>/results_habitat/``) and seeds Gaussians + rasterizer
+        cameras from it. This is the *legacy* SplaTAM path: use it when you trust the
+        on-disk data and do NOT want to depend on a live simulator.
+
+        The orientation/scale of the resulting Gaussian world is defined by
+        ``dataset_sample[0]``. If the on-disk images were baked with a different
+        habitat build than the one currently driving ``sim.simulate``, the Gaussian
+        world will disagree with live frames, which typically shows up as
+        vertically-flipped / mirrored eval plots. In that case use the
+        :class:`OpenSplatam` backbone (``slam.method = "opensplatam"``) instead,
+        which initialises from the first simulator frame and keeps everything
+        aligned.
         """
         if self.seperate_densification_res:
             # Initialize Parameters, Canonical & Densification Camera parameters
@@ -391,8 +394,124 @@ class SplatamOurs(SlamModel):
         self.first_frame_w2c = first_frame_w2c
         self.cam = cam
 
+    def _get_scaled_camera_intrinsics(self) -> torch.Tensor:
+        """Build the active camera intrinsics from dataset metadata only.
+
+        This avoids touching ``dataset_sample[0]`` when simulator-first init is
+        requested, while keeping the same resized calibration as the training
+        pipeline.
+        """
+        intrinsics = self.dataset_sample.get_cam_K().to(self.device).float()
+        intrinsics[0, 0] *= self.dataset_sample.width_downsample_ratio
+        intrinsics[1, 1] *= self.dataset_sample.height_downsample_ratio
+        intrinsics[0, 2] *= self.dataset_sample.width_downsample_ratio
+        intrinsics[1, 2] *= self.dataset_sample.height_downsample_ratio
+        return intrinsics
+
+    def init_camera_parameters_from_simulator(self, color, depth, c2w):
+        """Initialize frame-0 directly from the live RGB-D simulator output.
+
+        This mirrors the working `SemSplatam` path and avoids discrepancies
+        between baked dataset frame 0 and the current Habitat stream.
+        """
+        intrinsics = self._get_scaled_camera_intrinsics()
+
+        color_processed = color.permute(2, 0, 1).to(self.device) / 255.0
+        depth_processed = depth.unsqueeze(0).to(self.device)
+        h, w = color_processed.shape[1], color_processed.shape[2]
+
+        w2c = torch.linalg.inv(c2w.to(self.device))
+        cam = setup_camera(w, h, intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())
+
+        mask = (depth_processed > 0).reshape(-1)
+        init_pt_cld, mean3_sq_dist = get_pointcloud(
+            color_processed,
+            depth_processed,
+            intrinsics,
+            w2c,
+            mask=mask,
+            compute_mean_sq_dist=True,
+            mean_sq_dist_method=self.config['mean_sq_dist_method'],
+        )
+        params, variables = initialize_params(
+            init_pt_cld,
+            self.num_frames,
+            mean3_sq_dist,
+            self.config['gaussian_distribution'],
+        )
+        variables['scene_radius'] = torch.max(depth_processed) / self.config['scene_radius_depth_ratio']
+
+        dataset_config = self.config["data"]
+        if "densification_image_height" not in dataset_config:
+            self.seperate_densification_res = False
+            self.densify_intrinsics = intrinsics
+            self.densify_cam = cam
+        else:
+            if dataset_config["densification_image_height"] != h or dataset_config["densification_image_width"] != w:
+                self.seperate_densification_res = True
+                densify_h = dataset_config["densification_image_height"]
+                densify_w = dataset_config["densification_image_width"]
+                densify_fx = intrinsics[0, 0] * densify_w / w
+                densify_fy = intrinsics[1, 1] * densify_h / h
+                densify_cx = intrinsics[0, 2] * densify_w / w
+                densify_cy = intrinsics[1, 2] * densify_h / h
+                densify_intrinsics = torch.tensor([
+                    [densify_fx, 0, densify_cx],
+                    [0, densify_fy, densify_cy],
+                    [0, 0, 1],
+                ], device=self.device, dtype=torch.float32)
+                self.densify_intrinsics = densify_intrinsics
+                self.densify_cam = setup_camera(
+                    densify_w,
+                    densify_h,
+                    densify_intrinsics.cpu().numpy(),
+                    w2c.detach().cpu().numpy(),
+                )
+            else:
+                self.seperate_densification_res = False
+                self.densify_intrinsics = intrinsics
+                self.densify_cam = cam
+
+        self.params = params
+        self.variables = variables
+        self.intrinsics = intrinsics
+        self.first_frame_w2c = w2c
+        self.cam = cam
+
+        if self.seperate_tracking_res:
+            self.tracking_cam = setup_camera(
+                self.tracking_color.shape[2],
+                self.tracking_color.shape[1],
+                self.tracking_intrinsics.cpu().numpy(),
+                w2c.detach().cpu().numpy(),
+            )
+
+    def _should_init_from_live_frame(self) -> bool:
+        """Decide frame-0 source for Gaussian initialisation.
+
+        Default: ``False`` (legacy ActiveSGM disk-based init from
+        ``data/Replica/<scene>/results_habitat/frame000000.*``). This matches
+        the behaviour of ``ActiveSGM/scripts/activesgm/run_replica.sh`` and
+        keeps the Gaussian world frame identical between the two projects.
+
+        Enable explicitly with ``slam.initialize_from_live_frame = True`` if
+        the on-disk frame 0 was baked with a different Habitat build than the
+        one currently driving ``sim.simulate`` (typical symptom: vertically
+        flipped / mirrored eval plots).
+        """
+        return bool(self.slam_cfg.get("initialize_from_live_frame", False))
+
     def _eval_alignment_kwargs(self):
-        """When eval uses a different basedir than training (e.g. replica_sim_nvs), align GT cameras to the map world."""
+        """Optional cross-dataset world alignment for evaluation.
+
+        By default this is disabled to match SemSplatam/OpenSplatam behaviour:
+        eval uses dataset-relative poses directly. Enable explicitly with
+        ``slam.align_eval_world = True`` only when you are sure eval poses are in
+        a different world frame and require remapping.
+        """
+        if not bool(self.slam_cfg.get("align_eval_world", False)):
+            return dict(train_first_abs_c2w=None, align_eval_world=False)
+
         data_cfg = self.config["data"]
         train_bd = os.path.abspath(data_cfg["basedir"])
         eval_bd = os.path.abspath(self.slam_cfg.dataset_eval_basedir)
@@ -519,7 +638,10 @@ class SplatamOurs(SlamModel):
         Returns:
         '''
         if time_idx==0:
-            self.init_camera_parameters()
+            if self._should_init_from_live_frame():
+                self.init_camera_parameters_from_simulator(color, depth, c2w)
+            else:
+                self.init_camera_parameters()
         self.update_gs_map(time_idx, color, depth, c2w, force_map_update, dont_add_kf, only_use_global_keyframe)
         self.update_explr_map(time_idx, depth, c2w, force_map_update)
 
