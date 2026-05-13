@@ -21,7 +21,7 @@ Pipeline
 
 Run with:
 
-    bash scripts/activesgm/01_slam_exploration.sh office0
+    bash scripts/aov-gs/01_slam_exploration.sh office0
 
 After the run finishes, the result directory contains
 ``language_features/<frame>_f.npy`` (CLIP embeddings) and
