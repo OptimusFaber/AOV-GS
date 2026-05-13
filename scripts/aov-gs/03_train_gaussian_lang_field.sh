@@ -7,25 +7,25 @@
 # обучает языковое поле и сохраняет lang_field.pt.
 #
 # Использование:
-#   bash scripts/activesgm/03_train_gaussian_lang_field.sh \
+#   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       [RESULT_DIR] [LATENT_DIM] [LEVEL] [NUM_ITERS] [DEVICE] [RENDER_CHECKPOINT]
 #
 # Примеры:
-#   bash scripts/activesgm/03_train_gaussian_lang_field.sh \
+#   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64
 #
-#   bash scripts/activesgm/03_train_gaussian_lang_field.sh \
+#   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       results/Replica/room0/ActiveOpenSem/run_0 3 s 30000 cuda:1 auto
 #
 # Все уровни SAM подряд (s → m → l):
-#   bash scripts/activesgm/03_train_gaussian_lang_field_all_levels.sh \
+#   bash scripts/aov-gs/03_train_gaussian_lang_field_all_levels.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64 12000
 #
 # nohup важно оборачивать всю цепочку в bash -c '...', иначе nohup действует только на первый вызов:
 #   cd /path/to/AOV-GS
-#   nohup bash -c 'bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 s 12000 && \
-#                  bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 m 12000 && \
-#                  bash scripts/activesgm/03_train_gaussian_lang_field.sh results/... 64 l 12000' \
+#   nohup bash -c 'bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 s 12000 && \
+#                  bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 m 12000 && \
+#                  bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 l 12000' \
 #       > train_lang_field.log 2>&1 &
 #
 # Аргументы:
@@ -108,7 +108,8 @@ python scripts/train_language_field.py \
     --latent_dim         "$LATENT_DIM" \
     --num_iters          "$NUM_ITERS" \
     --device             "$DEVICE" \
-    --render_checkpoint  "$RENDER_CHECKPOINT"
+    --render_checkpoint  "$RENDER_CHECKPOINT" \
+    --legacy
 
 echo ""
 echo "=== Language field обучено ==="

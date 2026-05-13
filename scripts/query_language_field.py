@@ -51,9 +51,16 @@ from src.slam.langsplatam.langsplatam import LangSplatam
 def infer_latent_dim(lang_field_pt: Path) -> int:
     """Read latent_dim from lang_field.pt (saved by train_language_field.py)."""
     ckpt = torch.load(str(lang_field_pt), map_location="cpu")
-    if isinstance(ckpt, dict) and "latent_dim" in ckpt:
+    if not isinstance(ckpt, dict):
+        raise ValueError(f"{lang_field_pt} must contain a dict checkpoint.")
+    if ckpt.get("format") == "langsplatv2" or "language_feature_logits" in ckpt:
+        return int(
+            ckpt.get("latent_dim")
+            or ckpt["language_feature_logits"].shape[1]
+        )
+    if "latent_dim" in ckpt:
         return int(ckpt["latent_dim"])
-    lf = ckpt.get("lang_feats") if isinstance(ckpt, dict) else None
+    lf = ckpt.get("lang_feats")
     if lf is None:
         raise ValueError(f"{lang_field_pt} must contain 'lang_feats' or 'latent_dim'.")
     return int(lf.shape[1])
@@ -717,28 +724,38 @@ def best_pose_for_centroid(
 def _render_raw_cosine_map(
     model: LangSplatam,
     clip_query: torch.Tensor,
-    ae: "Autoencoder",
+    ae: "Autoencoder | None",
     w2c: torch.Tensor,
     H: int,
     W: int,
     device: torch.device,
     blur_sigma: float,
+    *,
+    use_v2: bool = False,
 ) -> np.ndarray:
     """Per-pixel raw cosine(decoded latent, CLIP query); used to rank camera poses by query."""
-    with torch.no_grad():
-        rendered = model.render_lang(w2c, H, W)
-    D = rendered.shape[0]
-    r_flat = rendered.permute(1, 2, 0).reshape(-1, D)
-    # IMPORTANT: avoid concatenating decoded chunks (can OOM for large H*W).
-    # Compute cosine similarities in a streaming fashion.
     batch = 4096
-    sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
+    q = clip_query.to(device).to(torch.float32)
     with torch.no_grad():
-        q = clip_query.to(r_flat.device).to(torch.float32)
-        for i in range(0, r_flat.shape[0], batch):
-            c = ae.decode(r_flat[i : i + batch])
-            c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
-            sim_flat[i : i + c.shape[0]] = (c @ q)
+        if use_v2:
+            rendered512 = model.render_v2_clip_feature_map(w2c, H, W)
+            rendered512 = F.normalize(rendered512, p=2, dim=0)
+            r_flat = rendered512.permute(1, 2, 0).reshape(-1, 512)
+        else:
+            assert ae is not None
+            rendered = model.render_lang(w2c, H, W)
+            D = rendered.shape[0]
+            r_flat = rendered.permute(1, 2, 0).reshape(-1, D)
+        sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
+        if use_v2:
+            for i in range(0, r_flat.shape[0], batch):
+                sim_flat[i : i + batch] = r_flat[i : i + batch] @ q
+        else:
+            assert ae is not None
+            for i in range(0, r_flat.shape[0], batch):
+                c = ae.decode(r_flat[i : i + batch])
+                c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
+                sim_flat[i : i + c.shape[0]] = (c @ q)
     sim = sim_flat.reshape(H, W)
     sim_np = sim.cpu().float().numpy()
     if blur_sigma > 0.0:
@@ -815,9 +832,10 @@ def best_pose_by_query_relevancy(
     W: int,
     device: torch.device,
     model: LangSplatam,
-    ae: "Autoencoder",
+    ae: "Autoencoder | None",
     clip_query: torch.Tensor,
     *,
+    use_v2: bool = False,
     margin_px: float,
     z_min: float,
     scene_bounds: tuple[np.ndarray, np.ndarray] | None,
@@ -906,6 +924,7 @@ def best_pose_by_query_relevancy(
             if fid not in sim_cache:
                 sim_cache[fid] = _render_raw_cosine_map(
                     model, clip_query, ae, w2c, H, W, device, blur_sigma,
+                    use_v2=use_v2,
                 )
             sim_np = sim_cache[fid]
             sc = _score_sim_map(
@@ -986,11 +1005,12 @@ def _normalize_relevancy_map(
 def render_relevancy_map(
     model: LangSplatam,
     clip_query: torch.Tensor,    # [512] unit-norm CLIP text emb
-    ae: "Autoencoder",
+    ae: "Autoencoder | None",
     w2c: torch.Tensor,
     H: int,
     W: int,
     *,
+    use_v2: bool = False,
     heatmap_norm: str = 'percentile',
     heatmap_p_low: float = 8.0,
     heatmap_p_high: float = 98.0,
@@ -1008,21 +1028,29 @@ def render_relevancy_map(
     Returns (jet heatmap BGR, float32 [H,W] normalized to [0,1] for viz,
     float32 [H,W] raw cosine after blur — для SAM/пика relevancy).
     """
-    with torch.no_grad():
-        rendered = model.render_lang(w2c, H, W)          # [D, H, W]
-    D = rendered.shape[0]
-    r_flat = rendered.permute(1, 2, 0).reshape(-1, D)    # [H*W, D]
-
-    # Decode to 512d in batches
-    # IMPORTANT: avoid concatenating decoded chunks (can OOM for large H*W).
     batch = 4096
-    sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
     with torch.no_grad():
+        if use_v2:
+            rendered512 = model.render_v2_clip_feature_map(w2c, H, W)
+            rendered512 = F.normalize(rendered512, p=2, dim=0)
+            r_flat = rendered512.permute(1, 2, 0).reshape(-1, 512)
+        else:
+            assert ae is not None
+            rendered = model.render_lang(w2c, H, W)          # [D, H, W]
+            D = rendered.shape[0]
+            r_flat = rendered.permute(1, 2, 0).reshape(-1, D)    # [H*W, D]
+
         q = clip_query.to(r_flat.device).to(torch.float32)
-        for i in range(0, r_flat.shape[0], batch):
-            c = ae.decode(r_flat[i : i + batch])
-            c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
-            sim_flat[i : i + c.shape[0]] = (c @ q)
+        sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
+        if use_v2:
+            for i in range(0, r_flat.shape[0], batch):
+                sim_flat[i : i + batch] = r_flat[i : i + batch] @ q
+        else:
+            assert ae is not None
+            for i in range(0, r_flat.shape[0], batch):
+                c = ae.decode(r_flat[i : i + batch])
+                c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
+                sim_flat[i : i + c.shape[0]] = (c @ q)
     sim = sim_flat.reshape(H, W)                         # [H, W]
     sim_np = sim.cpu().float().numpy()
 
@@ -1249,6 +1277,18 @@ def parse_args() -> argparse.Namespace:
              '(без keyframes); камера смотрит на центроид кластера.',
     )
     p.add_argument(
+        '--traj_txt',
+        default=None,
+        help='Путь к traj.txt (каждая строка = 16 чисел, 4x4). '
+             'Если задано, используется ТОЛЬКО этот набор поз (игнорирует --poses и автопозы).',
+    )
+    p.add_argument(
+        '--traj_format',
+        choices=('c2w', 'w2c'),
+        default='c2w',
+        help='Как интерпретировать матрицы в traj.txt. По умолчанию c2w (инвертируется в w2c).',
+    )
+    p.add_argument(
         '--auto_pose_samples',
         type=int,
         default=4096,
@@ -1267,7 +1307,12 @@ def parse_args() -> argparse.Namespace:
         help='RNG для автопоз.',
     )
     p.add_argument('--text',              required=True)
-    p.add_argument('--ae_ckpt',           required=True)
+    p.add_argument(
+        '--ae_ckpt',
+        default=None,
+        help='Путь к чекпойнту автоэнкодера (legacy lang_field). '
+             'Для LangSplatV2 (format=langsplatv2) не нужен — можно опустить.',
+    )
     p.add_argument('--clip_model',        default='ViT-B-16')
     p.add_argument('--clip_pretrained',   default='laion2b_s34b_b88k')
     p.add_argument('--device',            default='cuda:0')
@@ -1393,6 +1438,22 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _load_traj_txt(path: Path, *, fmt: str, device: torch.device) -> dict[int, torch.Tensor]:
+    arr = np.loadtxt(str(path), dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.shape[1] != 16:
+        raise ValueError(f"{path} must have 16 floats per line (got {arr.shape[1]}).")
+    mats = arr.reshape(-1, 4, 4)
+    out: dict[int, torch.Tensor] = {}
+    for i in range(mats.shape[0]):
+        m = torch.tensor(mats[i], dtype=torch.float32, device=device)
+        if fmt == 'c2w':
+            m = torch.inverse(m)
+        out[i] = m
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1410,19 +1471,56 @@ def main() -> None:
     model.load_lang_field(Path(args.lang_field))
     H = int(model.params['org_height'])
     W = int(model.params['org_width'])
-    N = model.lang_feats.shape[0]
+    N = int(model.params['means3D'].shape[0])
     print(f'Gaussians: {N}   latent_dim={latent_dim}   Resolution: {H}×{W}')
+    use_v2 = getattr(model, "model_format", "legacy") == "langsplatv2"
+    if use_v2:
+        print('Language field: LangSplatV2 (codebook + sparse coefficients)')
+    else:
+        print('Language field: legacy (AE latent)')
 
     means_all = model.params['means3D'].detach().cpu().numpy()
 
-    poses_synthetic = args.poses is None or str(args.poses).strip() == ''
+    use_traj = args.traj_txt is not None and str(args.traj_txt).strip() != ''
+    poses_synthetic = (not use_traj) and (args.poses is None or str(args.poses).strip() == '')
     poses_path: Path | None
     poses_raw: dict
     poses_from_file: dict[int, torch.Tensor] | None = None
     auto_positions: np.ndarray | None = None
     scene_bounds_for_syn: tuple[np.ndarray, np.ndarray]
 
-    if poses_synthetic:
+    if use_traj:
+        poses_path = Path(args.traj_txt).expanduser()
+        if not poses_path.is_file():
+            raise FileNotFoundError(f"traj.txt not found: {poses_path.resolve()}")
+        poses_from_file = _load_traj_txt(
+            poses_path,
+            fmt=args.traj_format,
+            device=device,
+        )
+        poses_raw = {str(k): v.detach().cpu().numpy().tolist() for k, v in poses_from_file.items()}
+        print(
+            f'Camera poses: ONLY traj.txt ({len(poses_from_file)} poses) → {poses_path.resolve()} '
+            f'(format={args.traj_format}).'
+        )
+
+        allowed_pose_ids_file = set(poses_from_file.keys())
+        if args.no_pose_scene_bounds:
+            scene_bounds = None
+        else:
+            scene_bounds = _resolve_scene_interior_bounds(
+                means_all,
+                poses_from_file,
+                p_lo=args.pose_percentile_lo,
+                p_hi=args.pose_percentile_hi,
+                shrink_init=args.pose_interior_shrink,
+            )
+
+        lo_fb, hi_fb = _gaussian_interior_aabb(means_all, p_lo=3.0, p_hi=97.0, shrink_frac=0.12)
+        scene_bounds_for_syn = _aabb_shrink_wall_margin(
+            lo_fb, hi_fb, args.pose_wall_margin_m,
+        )
+    elif poses_synthetic:
         poses_path = None
         poses_raw = {}
         print(
@@ -1527,8 +1625,17 @@ def main() -> None:
             lo_fb, hi_fb, args.pose_wall_margin_m,
         )
 
-    # Load AE for decoding
-    ae = _load_ae(Path(args.ae_ckpt), args.encoder_dims, args.decoder_dims, device)
+    # Load AE for decoding (legacy only)
+    ae = None
+    if use_v2:
+        if args.ae_ckpt:
+            print('[warn] --ae_ckpt ignored for LangSplatV2 checkpoints.')
+    else:
+        if not args.ae_ckpt:
+            sys.exit(
+                'Для legacy lang_field.pt укажите --ae_ckpt (чекпойнт автоэнкодера).'
+            )
+        ae = _load_ae(Path(args.ae_ckpt), args.encoder_dims, args.decoder_dims, device)
 
     # CLIP text embedding in 512d (the actual semantic space)
     clip_query = encode_query_clip(
@@ -1548,17 +1655,21 @@ def main() -> None:
     # По умолчанию умножаем на sigmoid(opacity), чтобы почти прозрачные выбросы
     # не забирали top-percentile; опционально — сырой cos для более «семантического» ранжирования.
     with torch.no_grad():
-        lang = model.lang_feats.detach()                            # [N, D]
         opacity = torch.sigmoid(
             model.params['logit_opacities'].detach().squeeze(-1)   # [N]
         )
         # IMPORTANT: stream scoring to avoid holding [N,512] on GPU.
         batch = 65536
-        q = clip_query.to(lang.device).to(torch.float32)            # [512]
-        scores = np.empty((lang.shape[0],), dtype=np.float32)
-        for i in range(0, lang.shape[0], batch):
-            chunk_lat = lang[i : i + batch]                         # [B, D]
-            chunk_512 = ae.decode(chunk_lat)                        # [B, 512]
+        dev = torch.device(args.device)
+        q = clip_query.to(dev).to(torch.float32)            # [512]
+        scores = np.empty((N,), dtype=np.float32)
+        for i in range(0, N, batch):
+            if use_v2:
+                chunk_512 = model.decode_gaussian_clip_v2(i, i + batch)
+            else:
+                assert ae is not None
+                chunk_lat = model.lang_feats.detach()[i : i + batch]
+                chunk_512 = ae.decode(chunk_lat)
             chunk_512 = F.normalize(chunk_512, dim=-1).to(torch.float32)
             cos = (chunk_512 @ q).clamp(min=0.0)                    # [B]
             op = opacity[i : i + cos.shape[0]].to(torch.float32)
@@ -1606,19 +1717,27 @@ def main() -> None:
               f'total={cl["total_score"]:.1f}  mean={_mean:.4f}  '
               f'centroid={cl["centroid"].round(3)}')
 
-    # Camera world positions for visualisation (keyframes or auto-sampled centres)
+    # Camera world positions for visualisation (traj/keyframes or auto-sampled centres)
     if poses_synthetic:
         assert auto_positions is not None
         cam_positions = auto_positions.copy()
     else:
-        cam_positions = np.array([_cam_world_from_w2c(np.array(v, dtype=np.float64))
-                                  for v in poses_raw.values()])
+        if poses_from_file is None:
+            cam_positions = np.zeros((0, 3), dtype=np.float32)
+        else:
+            cam_positions = np.array(
+                [
+                    _cam_world_from_w2c(v.detach().cpu().numpy().astype(np.float64))
+                    for v in poses_from_file.values()
+                ]
+            )
 
     rmap_kw = dict(
         heatmap_norm=args.heatmap_norm,
         heatmap_p_low=args.heatmap_p_low,
         heatmap_p_high=args.heatmap_p_high,
         blur_sigma=args.heatmap_blur,
+        use_v2=use_v2,
     )
 
     # Colour palette: index=0 is reserved for the TARGET cluster (green).
@@ -1672,6 +1791,7 @@ def main() -> None:
             fid, w2c = best_pose_by_query_relevancy(
                 cl['centroid'], poses, model.intrinsics, H, W, device,
                 model, ae, clip_query,
+                use_v2=use_v2,
                 margin_px=args.pose_margin_px,
                 z_min=args.pose_z_min,
                 scene_bounds=scene_bounds,
@@ -1708,7 +1828,8 @@ def main() -> None:
             "text": args.text,
             "lang_field": str(Path(args.lang_field).resolve()),
             "checkpoint": str(Path(args.checkpoint).resolve()),
-            "ae_ckpt": str(Path(args.ae_ckpt).resolve()),
+            "ae_ckpt": str(Path(args.ae_ckpt).resolve()) if args.ae_ckpt else "",
+            "langsplat_v2": bool(use_v2),
             "latent_dim": int(latent_dim),
             "top_percentile": float(args.top_percentile),
             "dbscan_eps": float(args.dbscan_eps),

@@ -1,22 +1,5 @@
 """
-Обучение языкового поля на замороженных гауссианах (LangSplat-совместимый).
-
-Предварительные условия:
-  1. Запущен ActiveSGM → results/{scene}/params*.npz + keyframe_poses.json
-  2. Запущен SAMCLIPExtractor → results/{scene}/language_features/*_s.npy, *_f.npy
-  3. Запущен train_language_autoencoder.py → results/{scene}/language_features_dim{D}/
-
-Usage (64d, дефолт)
--------------------
-    python scripts/train_language_field.py \\
-        --checkpoint    results/room0/splatam/final/params0.npz \\
-        --poses         results/room0/keyframe_poses.json \\
-        --features_dir  results/room0/language_features_dim64 \\
-        --level         s \\
-        --output_dir    results/room0/lang_field_s \\
-        --num_iters     30000 \\
-        --latent_dim    64 \\
-        --device        cuda:0
+Train LangSplatV2-style language field on frozen SplaTAM Gaussians.
 """
 
 import argparse
@@ -41,9 +24,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--poses", required=True,
                    help="keyframe_poses.json (frame_id → 4×4 w2c).")
     p.add_argument("--features_dir", required=True,
-                   help="Папка с сжатыми фичами (после train_language_autoencoder.py), "
-                        "напр. language_features_dim64/. "
-                        "Для обратной совместимости принимается и --features_dim3.")
+                   help="Папка c raw SAM+CLIP фичами, напр. language_features/.")
     p.add_argument("--features_dim3",
                    help="(устарело) Псевдоним для --features_dir.")
     p.add_argument("--level", default="s", choices=["default", "s", "m", "l"],
@@ -51,8 +32,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", required=True,
                    help="Куда сохранить lang_field.pt.")
     p.add_argument("--latent_dim", type=int, default=64,
-                   help="Размер латентного вектора (должен совпадать с AE). "
-                        "64 для 64d режима, 3 для LangSplat-совместимого.")
+                   help="(legacy) Для обратной совместимости. "
+                        "В режиме V2 не используется для декодера.")
+    p.add_argument("--vq_layer_num", type=int, default=1,
+                   help="Число уровней residual VQ (L).")
+    p.add_argument("--codebook_size", type=int, default=64,
+                   help="Размер codebook на уровень (K).")
+    p.add_argument("--topk", type=int, default=4,
+                   help="Сколько коэффициентов top-k оставлять на уровень.")
+    p.add_argument("--max_init_features", type=int, default=200000,
+                   help="Макс. число CLIP-векторов для KMeans инициализации.")
+    p.add_argument("--train_downscale", type=float, default=1.0,
+                   help="Масштаб рендера при обучении (0,1]. "
+                        "Напр. 0.5 сильно снижает VRAM.")
+    p.add_argument("--legacy", action="store_true",
+                   help="Включить старый режим LangSplat (без codebook).")
     p.add_argument("--num_iters", type=int, default=30000)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--lambda_l1", type=float, default=1.0)
@@ -86,10 +80,20 @@ def main() -> None:
         latent_dim=args.latent_dim,
         device=args.device,
         render_checkpoint=args.render_checkpoint,
+        vq_layer_num=args.vq_layer_num,
+        codebook_size=args.codebook_size,
+        topk=args.topk,
     )
 
-    logger.info("Запускаем обучение language field (level=%s, iters=%d, latent_dim=%d)...",
-                args.level, args.num_iters, args.latent_dim)
+    logger.info(
+        "Запускаем обучение language field (mode=%s, level=%s, iters=%d, L=%d, K=%d, topk=%d)...",
+        "legacy" if args.legacy else "LangSplatV2",
+        args.level,
+        args.num_iters,
+        args.vq_layer_num,
+        args.codebook_size,
+        args.topk,
+    )
     model.train_language_field(
         language_features_dir=Path(features_dir),
         poses_file=Path(args.poses),
@@ -100,6 +104,9 @@ def main() -> None:
         lambda_cos=args.lambda_cos,
         output_dir=Path(args.output_dir),
         log_every=args.log_every,
+        use_langsplat_v2=not args.legacy,
+        max_init_features=args.max_init_features,
+        train_downscale=args.train_downscale,
     )
 
     logger.info("Готово. Language field сохранён в: %s", args.output_dir)

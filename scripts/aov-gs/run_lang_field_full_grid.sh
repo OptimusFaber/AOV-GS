@@ -18,7 +18,7 @@
 #
 # Использование:
 #   cd New-Proj
-#   bash scripts/activesgm/run_lang_field_full_grid.sh \
+#   bash scripts/aov-gs/run_lang_field_full_grid.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0
 #
 # Env:
@@ -97,6 +97,7 @@ _run_one() {
         --device             "${DEVICE}" \
         --render_checkpoint  "${RENDER_CHECKPOINT}" \
         --log_every          "${LOG_EVERY}" \
+        --legacy \
         >"${log}" 2>&1
     local ec=$?
     set -e
