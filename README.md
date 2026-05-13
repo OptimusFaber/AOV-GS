@@ -2,7 +2,7 @@
 
 **Краткое имя для репозитория:** `aov-gs` или `OAVGS` (Open / Active Vocabulary + Gaussian Splatting).
 
-Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting) и **открытое языковое поле** (SAM + CLIP → автоэнкодер → признаки на гауссианах), в духе LangSplat. Основной конфиг — **ActiveOpenSem** без OneFormer.
+Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting). Поддерживаются **четыре готовых пайплайна** обучения/картирования (см. `scripts/aov-gs/pipeline_gs_*.sh`): только геометрия, OneFormer, LangSplat (AE) и LangSplatV2 (codebook). Open-vocab по умолчанию — **ActiveOpenSem** (SAM + CLIP, без OneFormer).
 
 ---
 
@@ -13,7 +13,7 @@
 3. [Данные Replica + Habitat](#данные-replica--habitat)
 4. [Чекпойнты SAM / CLIP](#чекпойнты-sam--clip)
 5. [Настройка путей в конфигах](#настройка-путей-в-конфигах)
-6. [Пайплайн: 3 этапа](#пайплайн-3-этапа)
+6. [Пайплайны Gaussian Splatting (4 режима)](#пайплайны-gaussian-splatting-4-режима)
 7. [Публикация на GitHub](#публикация-на-github)
 
 ---
@@ -49,6 +49,12 @@ conda activate active-sgm
 ```bash
 pip install open_clip_torch
 pip install git+https://github.com/facebookresearch/segment-anything.git
+```
+
+Для **LangSplatV2** (инициализация codebook через KMeans) добавьте:
+
+```bash
+pip install scikit-learn
 ```
 
 Положите вес SAM (см. следующий раздел) и при необходимости задайте кэш OpenCLIP (`OPENCLIP_CACHE` / загрузки по сети).
@@ -106,13 +112,58 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 
 1. Откройте `configs/Replica/<scene>/habitat.py` и выставьте **`scene_id`** на ваш `mesh_semantic.ply` / stage config в дереве Replica.  
 2. Убедитесь, что `data/Replica/<scene>/` содержит нужные `results` / `results_habitat` и `traj.txt` (см. `replica.py` в датасете).  
-3. При **одной GPU** в `configs/Replica/<scene>/ActiveOpenSem.py` поставьте `sam_clip.device = "cuda:0"` (иначе падение при отсутствии `cuda:1`).
+3. При **одной GPU** в `configs/Replica/<scene>/ActiveOpenSem.py` поставьте `sam_clip.device = "cuda:0"` (иначе падение при отсутствии `cuda:1`).  
+4. **`ActiveOpenSem.py`** добавлен для **всех** сцен Replica с `habitat.py` в этом репозитории: **`office0` … `office4`**, **`room0` … `room2`**. В каждом файле заданы `general.scene` и **`bbox_bound`**, согласованные с соответствующим `ActiveSem.py` той же сцены.
 
 ---
 
-## Пайплайн: 3 этапа
+## Пайплайны Gaussian Splatting (4 режима)
 
-**Суть:** (1) активное картирование SplaTAM + параллельно SAM/CLIP → `language_features/`; (2) автоэнкодер CLIP 512→D; (3) обучение языкового поля на замороженных гауссианах.
+Все оркестраторы лежат в **`scripts/aov-gs/`**. Перед запуском: `cd` в корень репозитория, conda-окружение активировано, данные Replica подготовлены (см. выше).
+
+Общие аргументы шага **01** (`01_slam_exploration.sh`): `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]`. Для окон OpenCV RGB‑D задайте `ENABLE_VIS=1` (иначе в логе будет `Visualize : 0`).
+
+| № | Скрипт | Конфиг `EXP` | Что получаете |
+|---|--------|--------------|----------------|
+| 1 | `pipeline_gs_no_segmenter.sh` | `ActiveGS` | Только SplaTAM / активное GS, **без** сегментатора и без `language_features/`. |
+| 2 | `pipeline_gs_oneformer.sh` | `ActiveSem` | **semsplatam** + **OneFormer** + планировщик `active_gsv2`; семантическая карта, **без** open‑vocab SAM+CLIP на диск. |
+| 3 | `pipeline_gs_langsplat.sh` | `ActiveOpenSem` | SAM + CLIP → `language_features/` → AE → **LangSplat (legacy)**. |
+| 4 | `pipeline_gs_langsplatv2.sh` | `ActiveOpenSem` | SAM + CLIP → **LangSplatV2** (codebook + sparse logits, **без** обязательного AE). |
+
+**English:** The four shell entry points above map to (1) geometry-only GS, (2) OneFormer-driven semantic ActiveSGM, (3) classic LangSplat with a CLIP autoencoder, (4) LangSplatV2 codebook training. All call `01_slam_exploration.sh` internally with the right `EXP` config.
+
+### 1) Без сегментатора
+
+```bash
+cd /path/to/AOV-GS
+bash scripts/aov-gs/pipeline_gs_no_segmenter.sh office0 0 0 0
+```
+
+Результаты: `results/Replica/office0/ActiveGS/run_0/`. Дальнейших шагов для языкового поля нет.
+
+### 2) С OneFormer
+
+Требуется файл `configs/Replica/<scene>/ActiveSem.py` (для `office0` он уже есть). Веса OneFormer задаются в конфиге (`oneformer_checkpoint`, и т.д.) — нужен доступ к HuggingFace или локальные кэши.
+
+```bash
+bash scripts/aov-gs/pipeline_gs_oneformer.sh office0 0 0 0
+```
+
+Результаты: `results/Replica/office0/ActiveSem/run_0/`. Это **не** open‑vocab CLIP+SAM пайплайн; для языкового поля по тексту используйте режимы 3–4.
+
+### 3) CLIP + SAM + LangSplat (с автоэнкодером)
+
+Одной командой (после неё уже выполнены этапы 01 → 02 → 03):
+
+```bash
+bash scripts/aov-gs/pipeline_gs_langsplat.sh
+# или с явными параметрами:
+# bash scripts/aov-gs/pipeline_gs_langsplat.sh office0 0 0 0 64 100 cuda:0 s 30000 auto
+```
+
+Выход языкового поля: `results/Replica/office0/ActiveOpenSem/run_0/lang_field_s64/lang_field.pt` (при уровне `s` и `LATENT_DIM=64`).
+
+**Пошагово вручную:**
 
 | Этап | Выход |
 |------|--------|
@@ -120,78 +171,72 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 | 2 | `language_features_dim{N}/`, `ckpt/<scene>/best_ckpt.pth` |
 | 3 | `lang_field_<level>{N}/lang_field.pt` |
 
-### Этап 1
-
 ```bash
-cd /path/to/aov-gs
-bash scripts/activesgm/01_slam_exploration.sh office0
-# отладка (keyframes на диск), без окон:  office0 ActiveOpenSem 0 0 1
-# окна OpenCV (RGB-D) + отладка:         office0 ActiveOpenSem 0 1 1
+bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0
+bash scripts/aov-gs/02_train_clip_autoencoder.sh results/Replica/office0/ActiveOpenSem/run_0 64 100 cuda:0
+bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/Replica/office0/ActiveOpenSem/run_0 64 s 30000 cuda:0 auto
 ```
 
-Аргументы: `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]`. Четвёртый (`ENABLE_VIS`) должен быть **1**, иначе в логе будет `Visualize : 0` и окон не будет — это не баг, а настройка (`--enable_vis` → `visualizer.vis_rgbd`).
+Сетка по размерностям AE: `bash scripts/aov-gs/run_lang_field_full_grid.sh results/Replica/office0/ActiveOpenSem/run_0` (нужны папки `language_features_dim3` … `language_features_dim64`).
 
-### Этап 2
-
-```bash
-bash scripts/activesgm/02_train_clip_autoencoder.sh \
-  results/Replica/office0/ActiveOpenSem/run_0 \
-  64 \
-  100 \
-  cuda:0
-```
-
-### Этап 3
+### 4) CLIP + SAM + LangSplatV2
 
 ```bash
-bash scripts/activesgm/03_train_gaussian_lang_field.sh \
-  results/Replica/office0/ActiveOpenSem/run_0 \
-  64 \
-  s \
-  30000 \
-  cuda:0 \
-  auto
+bash scripts/aov-gs/pipeline_gs_langsplatv2.sh
+# полный пример:
+# bash scripts/aov-gs/pipeline_gs_langsplatv2.sh office0 0 0 0 64 s 30000 cuda:0 1 4 auto 1.0
 ```
 
-Прямой вызов Python и **сетка экспериментов** — см. сжатое описание ниже.
+Шаг **02** для V2 — это `02_validate_features_langsplatv2.sh` (проверка `language_features/`, без обучения AE). Шаг **03** — `03_train_gaussian_lang_field_langsplatv2.sh` (аргументы: `RESULT_DIR`, `K`, `LEVEL`, `NUM_ITERS`, `DEVICE`, `L`, `TOPK`, `RENDER_CHECKPOINT`, `TRAIN_DOWNSCALE`).
+
+Все уровни SAM подряд: `bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2_all_levels.sh results/.../run_0`.
+
+Сетка V2: `bash scripts/aov-gs/run_lang_field_full_grid_langsplatv2.sh results/Replica/office0/ActiveOpenSem/run_0` (переменные `GRID_K_VALUES`, `GRID_L_VALUES`, см. заголовок скрипта).
+
+**Прямой вызов Python (V2):**
+
+```bash
+python scripts/train_language_field.py \
+  --checkpoint    results/Replica/office0/ActiveOpenSem/run_0/splatam/final/params0.npz \
+  --poses         results/Replica/office0/ActiveOpenSem/run_0/keyframe_poses.json \
+  --features_dir  results/Replica/office0/ActiveOpenSem/run_0/language_features \
+  --level         s \
+  --output_dir    results/Replica/office0/ActiveOpenSem/run_0/lang_field_sk64_l1 \
+  --codebook_size 64 --vq_layer_num 1 --topk 4 \
+  --num_iters     30000 --device cuda:0 --render_checkpoint auto
+```
+
+Старый режим (только при ручном запуске Python): добавьте `--legacy` и укажите `language_features_dim*` после AE.
 
 ### VRAM (ориентиры)
 
-- **Этап 1:** SplaTAM ~8–14 GB + SAM ~2–4 GB + CLIP ~1–2 GB; удобны 2 GPU или одна 16+ GB.  
-- **Этап 2:** обычно легче (~2–6 GB).  
-- **Этап 3:** растёт с числом гауссианов, D и числом проходов растра; для D=64 используйте `--render_checkpoint on` или `auto` при OOM.
+- **01 + SAM/CLIP:** SplaTAM ~8–14 GB + SAM ~2–4 GB + CLIP ~1–2 GB.  
+- **LangSplat, этап 2 (AE):** обычно ~2–6 GB.  
+- **LangSplat, этап 3:** растёт с числом гауссианов и `latent_dim`; при OOM `RENDER_CHECKPOINT=on` или `auto`.  
+- **LangSplatV2, этап 3:** растёт с \(L \times K\); см. `--train_downscale` в `03_train_gaussian_lang_field_langsplatv2.sh`.
 
-### Сетка `run_lang_field_full_grid.sh`
-
-```bash
-bash scripts/activesgm/run_lang_field_full_grid.sh \
-  results/Replica/office0/ActiveOpenSem/run_0
-```
-
-Перед запуском должны существовать `language_features_dim3` … `language_features_dim64`. Логи: `lang_field_grid_logs/`, кривые loss: `lang_field_{L}{D}/loss_{D}{L}.txt`.
-
-### Режим `--render_checkpoint` (D > 3)
+### Режим `--render_checkpoint`
 
 | Значение | Поведение |
 |----------|-----------|
-| `off` | Один граф на все проходы; быстрее, больше VRAM. |
-| `on` | Checkpoint на каждый 3-канальный проход; меньше VRAM. |
-| `auto` | Checkpoint при `latent_dim == 64`, иначе как `off`. |
+| `off` | Один граф на все 3‑канальные проходы; быстрее, больше VRAM. |
+| `on` | Gradient checkpoint на каждый проход; меньше VRAM. |
+| `auto` | Для legacy — checkpoint при `latent_dim==64`; для V2 — эвристика в `LangSplatam` (как в AOV-GS-V2). |
 
-### Запросы к полю
+### Запросы к языковому полю (режимы 3–4)
 
 ```bash
-bash scripts/activesgm/run_query_lang_fields_office0.sh \
+bash scripts/aov-gs/run_query_lang_fields_office0.sh \
   results/Replica/office0/ActiveOpenSem/run_0
 ```
 
-Также: `scripts/query_language_field.py`, `scripts/demo_sam_clip_text_query.py`.
+`scripts/query_language_field.py` сам определяет формат чекпойнта (`legacy` vs LangSplatV2).
 
-### Чеклист согласованности
+### Чеклисты
 
-1. `latent_dim` на этапах 2 и 3 совпадает с именем `language_features_dim{N}`.  
-2. Чекпойнт карты: в `final/` может быть `params0.npz` или `params.npz` — скрипты учитывают оба.  
-3. `--level` (s/m/l) согласован с данными в `_s.npy`.
+**LangSplat (legacy):** одинаковый `latent_dim` в этапах 2 и 3; папки `language_features_dim{N}`; `--level` согласован с `*_s.npy`.
+
+**LangSplatV2:** этап 3 читает сырые **`language_features/`** (512‑D), не `language_features_dim*`; в `splatam/final/` допустимы `params0.npz` или `params.npz`.
 
 ---
 
@@ -222,7 +267,7 @@ git push -u origin main
 
 - **`scripts/data/`** — загрузка и генерация Replica / MP3D.  
 - **`scripts/evaluation/`** — оценки 3D / семантики / NVS в духе ActiveSGM.  
-- **`scripts/activesgm/`** — минимальный пайплайн AOV-GS (этап 1–3), грид/запросы для языкового поля.
+- **`scripts/aov-gs/`** — шаги 01–03, гриды, запросы к языковому полю и **оркестраторы** `pipeline_gs_*.sh`.
 
 ---
 
