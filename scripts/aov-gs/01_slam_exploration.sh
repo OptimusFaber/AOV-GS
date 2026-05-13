@@ -11,17 +11,17 @@
 #   keyframes/frame_*.jpg       – RGB-кейфреймы (только с --debug)
 #
 # Использование:
-#   bash scripts/activesgm/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]
+#   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]
 #
 #   ENABLE_VIS: 0 = без окон OpenCV (RGB-D), 1 = показать live-визуализацию (нужен дисплей / X11)
 #   DEBUG:      1 = дополнительно писать keyframes/ и segmentframes/
 #
 # Примеры:
-#   bash scripts/activesgm/01_slam_exploration.sh
-#   bash scripts/activesgm/01_slam_exploration.sh office0
-#   bash scripts/activesgm/01_slam_exploration.sh office0 ActiveOpenSem 0 0 1
+#   bash scripts/aov-gs/01_slam_exploration.sh
+#   bash scripts/aov-gs/01_slam_exploration.sh office0
+#   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 1
 #   # визуализация RGB-D + debug:
-#   bash scripts/activesgm/01_slam_exploration.sh office0 ActiveOpenSem 0 1 1
+#   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 1 1
 ##################################################
 
 set -e

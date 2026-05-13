@@ -10,7 +10,7 @@ This is a small wrapper around `scripts/eval_language_autoencoder.py` that:
 - runs evaluation with user-provided text queries and writes per-ckpt metrics files
 
 Example:
-  python scripts/activesgm/eval_run_autoencoders.py \
+  python scripts/aov-gs/eval_run_autoencoders.py \
     --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
     --scene_name office0 \
     --queries "a sofa" "a table" "a window" "the chair" \

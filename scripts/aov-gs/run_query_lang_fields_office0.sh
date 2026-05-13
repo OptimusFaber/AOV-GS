@@ -3,14 +3,14 @@
 # Batch query evaluation for all trained language fields in a RESULT_DIR.
 #
 # Preferred (default) mode:
-#   runs `scripts/activesgm/eval_run_lang_fields.py` which:
+#   runs `scripts/aov-gs/eval_run_lang_fields.py` which:
 #   - picks the correct AE checkpoint by latent_dim
 #   - runs `scripts/query_language_field.py` for each query
 #   - writes `RESULT_DIR/lang_field_query_eval/summary.csv`
 #
 # Usage:
 #   cd New-Proj
-#   bash scripts/activesgm/run_query_lang_fields_office0.sh \
+#   bash scripts/aov-gs/run_query_lang_fields_office0.sh \
 #     results/Replica/office0/ActiveOpenSem/run_0
 #
 # Env (optional):
@@ -176,7 +176,7 @@ if [ "$LEGACY" -eq 1 ]; then
 fi
 
 # Preferred path: python batch evaluator + summary.csv
-EVAL_CMD=("$PY" scripts/activesgm/eval_run_lang_fields.py
+EVAL_CMD=("$PY" scripts/aov-gs/eval_run_lang_fields.py
   --result_dir "$RESULT_DIR"
   --scene_name "$SCENE"
   --device "$DEVICE"

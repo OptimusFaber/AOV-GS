@@ -9,7 +9,7 @@
 # Поддерживаемые значения LATENT_DIM: 3, 4, 8, 16, 32, 64
 #
 # Использование:
-#   bash scripts/activesgm/02_train_clip_autoencoder.sh \
+#   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       RESULT_DIR [LATENT_DIM] [NUM_EPOCHS] [DEVICE] [HIDDEN_DIMS]
 #
 #   Аргументы (по порядку):
@@ -22,18 +22,18 @@
 #                       пример: "256 64"  →  512 → 256 → 64 → LATENT_DIM
 #
 # Примеры:
-#   bash scripts/activesgm/02_train_clip_autoencoder.sh \
+#   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64
 #
-#   bash scripts/activesgm/02_train_clip_autoencoder.sh \
+#   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0
 #
 #   # Своя архитектура: 512 → 128 → 4
-#   bash scripts/activesgm/02_train_clip_autoencoder.sh \
+#   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0 "128"
 #
 #   # Своя архитектура: 512 → 256 → 32 → 4
-#   bash scripts/activesgm/02_train_clip_autoencoder.sh \
+#   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/room0/ActiveOpenSem/run_0 4 200 cuda:1 "256 32"
 ##################################################
 

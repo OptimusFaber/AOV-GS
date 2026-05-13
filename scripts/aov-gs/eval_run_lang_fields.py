@@ -14,7 +14,7 @@ Outputs (default):
     summary.csv
 
 Example:
-  python scripts/activesgm/eval_run_lang_fields.py \
+  python scripts/aov-gs/eval_run_lang_fields.py \
     --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
     --scene_name office0 \
     --queries "a sofa" "a table" "a window" "the chair" \
