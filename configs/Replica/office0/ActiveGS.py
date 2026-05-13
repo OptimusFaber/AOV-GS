@@ -152,7 +152,7 @@ if planner["local_planner_method"] == "RRTNaruto":
 visualizer = dict(
     method = "active_gs",
     vis_rgbd        = True,                             # visualize RGB-D
-    vis_rgbd_max_depth = 10
+    vis_rgbd_max_depth = 10,
 
     ### mesh related ###
     # mesh_vis_freq = 500,                                # mesh save frequency
