@@ -360,10 +360,28 @@ class LangSplatam:
         w2c_np = w2c.detach().cpu().numpy()
         return _setup_camera(W, H, intr_np, w2c_np)
 
+    def _eval_style_transformed_gaussians(self, gt_w2c_k: torch.Tensor) -> Dict:
+        """
+        World→camera Gaussian transform consistent with ``eval_helper.eval``.
+
+        Uses ``eval_helper.transform_to_frame(..., rel_w2c=gt_w2c_k)``.
+        Raster projection must still be built via ``_setup_camera(H, W, self.first_frame_w2c)``.
+        """
+        from src.slam.splatam.eval_helper import transform_to_frame as splat_eval_t2f
+
+        m = gt_w2c_k.to(device=self.device, dtype=torch.float32)
+        return splat_eval_t2f(self.params, 0, False, False, rel_w2c=m)
+
     def _transform_gaussians(self, w2c_rel: torch.Tensor) -> Dict:
         """
         Transform Gaussian centres from world to camera frame.
         Simplified version of SplaTAM's ``transform_to_frame``.
+
+        .. note::
+           For parity with SplaTAM-AOV NVS metrics (``eval`` / ``gs_*.png``), rendering
+           should use ``_eval_style_transformed_gaussians`` + ``first_frame_w2c``
+           camera — see ``_render_feature_map``. This helper remains for callers that
+           intentionally mimic legacy single-``w2c`` setups.
         """
         sys.path.insert(0, "third_parties/splatam")
         from utils.slam_helpers import transform_to_frame
@@ -420,9 +438,14 @@ class LangSplatam:
     ) -> torch.Tensor:
         """
         Render an arbitrary per-Gaussian feature tensor [N, feat_dim].
+
+        ``w2c_rel`` is the **Gaussian** world→camera matrix for view *k*
+        (same as ``eval``'s ``gt_w2c``); the raster intrinsics/projector use
+        ``first_frame_w2c`` saved in the SplaTAM checkpoint — matching
+        ``eval_helper.eval``.
         """
-        cam = self._setup_camera(H, W, w2c_rel)
-        transformed = self._transform_gaussians(w2c_rel)
+        cam = self._setup_camera(H, W, self.first_frame_w2c)
+        transformed = self._eval_style_transformed_gaussians(w2c_rel)
         Renderer = _get_rgb_renderer()
         renderer = Renderer(raster_settings=cam)
 
