@@ -123,9 +123,22 @@ if __name__ == "__main__":
             clip_pretrained     = getattr(sam_clip_cfg, 'clip_pretrained', 'openai'),
             device              = getattr(sam_clip_cfg, 'device', 'cuda:1'),
             queue_size          = getattr(sam_clip_cfg, 'queue_size', 8),
+            submit_timeout_s    = getattr(sam_clip_cfg, 'submit_timeout_s', 1.0),
             bbox_pad_px         = getattr(sam_clip_cfg, 'bbox_pad_px', 20),
             clip_batch_size     = getattr(sam_clip_cfg, 'clip_batch_size', 32),
             max_masks_per_frame = getattr(sam_clip_cfg, 'max_masks_per_frame', 120),
+            corrclip_mask_merge = getattr(sam_clip_cfg, 'corrclip_mask_merge', True),
+            corrclip_merge_sim_thresh = getattr(sam_clip_cfg, 'corrclip_merge_sim_thresh', 0.86),
+            corrclip_merge_dist_px = getattr(sam_clip_cfg, 'corrclip_merge_dist_px', 80.0),
+            corrclip_interclass_suppress_alpha = getattr(
+                sam_clip_cfg, 'corrclip_interclass_suppress_alpha', 0.15
+            ),
+            corrclip_interclass_sim_thresh = getattr(
+                sam_clip_cfg, 'corrclip_interclass_sim_thresh', 0.78
+            ),
+            corrclip_interclass_sigma_px = getattr(
+                sam_clip_cfg, 'corrclip_interclass_sigma_px', 120.0
+            ),
             debug_dir           = _debug_seg_dir,
             levels              = tuple(getattr(sam_clip_cfg, 'levels', ('p',))),
             save_fp16           = getattr(sam_clip_cfg, 'save_fp16', True),

@@ -148,6 +148,14 @@ sam_clip = dict(
     queue_size          = 8,    # max keyframes in-flight
     clip_batch_size     = 32,   # masks per CLIP forward
     max_masks_per_frame = 120,  # cap to bound peak GPU memory
+
+    # CorrCLIP-style post-processing (see --corrclip in activesgm.py / 01_slam_exploration.sh).
+    corrclip_mask_merge = True,
+    corrclip_merge_sim_thresh = 0.86,
+    corrclip_merge_dist_px = 80.0,
+    corrclip_interclass_suppress_alpha = 0.15,
+    corrclip_interclass_sim_thresh = 0.78,
+    corrclip_interclass_sigma_px = 120.0,
 )
 
 

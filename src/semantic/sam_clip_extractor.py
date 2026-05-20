@@ -149,6 +149,122 @@ def _resize_to_fit_and_letterbox_replicate(img: np.ndarray, out_hw: int = 224) -
     return cv2.copyMakeBorder(resized, top, bottom, left, right, borderType=cv2.BORDER_REPLICATE)
 
 
+def _mask_centroid_xy(mask: np.ndarray) -> tuple[float, float]:
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return 0.0, 0.0
+    return float(xs.mean()), float(ys.mean())
+
+
+def _seg_to_bbox_area(seg: np.ndarray) -> tuple[np.ndarray, int]:
+    ys, xs = np.where(seg)
+    if len(xs) == 0:
+        return np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float64), 0
+    x0, x1 = float(xs.min()), float(xs.max())
+    y0, y1 = float(ys.min()), float(ys.max())
+    w = max(1.0, x1 - x0 + 1.0)
+    h = max(1.0, y1 - y0 + 1.0)
+    area = int(seg.sum())
+    return np.array([x0, y0, w, h], dtype=np.float64), area
+
+
+def _merge_masks_corrclip_style(
+    masks: list,
+    embs: np.ndarray,
+    sim_thresh: float,
+    max_dist_px: float,
+) -> tuple[list, np.ndarray]:
+    """
+    CorrCLIP-inspired mask merging:
+    merge small masks into nearby semantically similar larger masks.
+    """
+    n = len(masks)
+    if n <= 1 or embs.shape[0] != n:
+        return masks, embs
+
+    feats = embs.astype(np.float32, copy=False)
+    feats /= (np.linalg.norm(feats, axis=1, keepdims=True) + 1e-8)
+    areas = np.array([int(m["area"]) for m in masks], dtype=np.int64)
+    cents = np.array([_mask_centroid_xy(m["segmentation"]) for m in masks], dtype=np.float32)
+    alive = np.ones((n,), dtype=bool)
+
+    # Merge from small to large to reduce over-segmentation fragments.
+    for i in np.argsort(areas):
+        if not alive[i]:
+            continue
+        ci = cents[i]
+        best_j = -1
+        best_sim = -1.0
+        for j in range(n):
+            if i == j or not alive[j]:
+                continue
+            if areas[j] < areas[i]:
+                continue
+            d = float(np.linalg.norm(ci - cents[j]))
+            if d > max_dist_px:
+                continue
+            s = float(np.dot(feats[i], feats[j]))
+            if s < sim_thresh:
+                continue
+            if s > best_sim:
+                best_sim = s
+                best_j = j
+        if best_j < 0:
+            continue
+
+        # Merge i -> best_j
+        seg_j = np.logical_or(masks[best_j]["segmentation"], masks[i]["segmentation"])
+        bbox_j, area_j = _seg_to_bbox_area(seg_j)
+        wi = float(max(areas[i], 1))
+        wj = float(max(areas[best_j], 1))
+        merged_feat = (wj * feats[best_j] + wi * feats[i]) / (wj + wi + 1e-8)
+        merged_feat /= (np.linalg.norm(merged_feat) + 1e-8)
+
+        masks[best_j]["segmentation"] = np.ascontiguousarray(seg_j)
+        masks[best_j]["bbox"] = bbox_j
+        masks[best_j]["area"] = int(area_j)
+        feats[best_j] = merged_feat
+        cents[best_j] = np.array(_mask_centroid_xy(seg_j), dtype=np.float32)
+        areas[best_j] = int(area_j)
+        alive[i] = False
+
+    keep = np.where(alive)[0]
+    # Keep deterministic ordering by area desc (same spirit as SAM sorting).
+    keep = keep[np.argsort(-areas[keep])]
+    merged_masks = [masks[k] for k in keep]
+    merged_feats = feats[keep].astype(np.float16)
+    return merged_masks, merged_feats
+
+
+def _suppress_interclass_corrclip_style(
+    embs: np.ndarray,
+    masks: list,
+    alpha: float,
+    sim_thresh: float,
+    sigma_px: float,
+) -> np.ndarray:
+    """
+    CorrCLIP-inspired inter-class suppression on mask embeddings.
+    """
+    n = embs.shape[0]
+    if n <= 1 or alpha <= 0.0:
+        return embs
+    feats = embs.astype(np.float32, copy=False)
+    feats /= (np.linalg.norm(feats, axis=1, keepdims=True) + 1e-8)
+    cents = np.array([_mask_centroid_xy(m["segmentation"]) for m in masks], dtype=np.float32)
+    sims = np.clip(feats @ feats.T, -1.0, 1.0)
+    np.fill_diagonal(sims, 0.0)
+
+    dxy = cents[:, None, :] - cents[None, :, :]
+    dist2 = (dxy ** 2).sum(axis=-1)
+    spatial = np.exp(-dist2 / (2.0 * (max(float(sigma_px), 1.0) ** 2)))
+    inter_w = np.maximum(sims - float(sim_thresh), 0.0) * spatial
+    suppress = inter_w @ feats
+    refined = feats - float(alpha) * suppress
+    refined /= (np.linalg.norm(refined, axis=1, keepdims=True) + 1e-8)
+    return refined.astype(np.float16)
+
+
 # ---------------------------------------------------------------------------
 # Core extractor
 # ---------------------------------------------------------------------------
@@ -181,10 +297,17 @@ class SAMCLIPExtractor:
         clip_pretrained: str = "laion2b_s34b_b88k",
         device: str = "cuda:1",
         queue_size: int = 64,
+        submit_timeout_s: float = 1.0,
         bbox_pad_px: int = 20,
         debug_dir: Optional[Union[str, Path]] = None,
         clip_batch_size: int = 32,
         max_masks_per_frame: int = 150,
+        corrclip_mask_merge: bool = True,
+        corrclip_merge_sim_thresh: float = 0.86,
+        corrclip_merge_dist_px: float = 80.0,
+        corrclip_interclass_suppress_alpha: float = 0.15,
+        corrclip_interclass_sim_thresh: float = 0.78,
+        corrclip_interclass_sigma_px: float = 120.0,
         # Параметры ниже оставлены для обратной совместимости, не используются
         levels: tuple = ("default", "s", "m", "l"),
         save_fp16: bool = True,
@@ -201,6 +324,13 @@ class SAMCLIPExtractor:
         self.bbox_pad_px = int(bbox_pad_px)
         self.clip_batch_size = int(clip_batch_size)
         self.max_masks_per_frame = int(max_masks_per_frame)
+        self.submit_timeout_s = float(submit_timeout_s)
+        self.corrclip_mask_merge = bool(corrclip_mask_merge)
+        self.corrclip_merge_sim_thresh = float(corrclip_merge_sim_thresh)
+        self.corrclip_merge_dist_px = float(corrclip_merge_dist_px)
+        self.corrclip_interclass_suppress_alpha = float(corrclip_interclass_suppress_alpha)
+        self.corrclip_interclass_sim_thresh = float(corrclip_interclass_sim_thresh)
+        self.corrclip_interclass_sigma_px = float(corrclip_interclass_sigma_px)
         self._queue: "queue.Queue[Optional[tuple]]" = queue.Queue(maxsize=queue_size)
         self._thread: Optional[threading.Thread] = None
         self._mask_generator = None
@@ -208,6 +338,11 @@ class SAMCLIPExtractor:
         self._clip_process = None
         self._running = False
         self._accepting_submissions = False
+        self._submitted_frames = 0
+        self._dropped_frames = 0
+        self._processed_frames = 0
+        self._failed_frames = 0
+        self._stats_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -228,18 +363,25 @@ class SAMCLIPExtractor:
         GPU-тензор немедленно конвертируется в CPU numpy, чтобы очередь не
         удерживала ссылки на GPU-память.
 
-        Если очередь заполнена — кадр пропускается (не блокируем SLAM-поток).
-        SAM обычно медленнее SLAM и может не успевать; пропущенные кадры не
-        критичны — покрытие будет неполным, но не аварийным.
+        Используется bounded blocking put (submit_timeout_s), чтобы не терять
+        кадры бесшумно при кратковременных всплесках нагрузки.
         """
         if not self._running or not self._accepting_submissions:
             return
         if isinstance(color, torch.Tensor):
             color = color.detach().cpu().numpy()
         try:
-            self._queue.put_nowait((frame_id, color))
+            self._queue.put((frame_id, color), block=True, timeout=self.submit_timeout_s)
+            with self._stats_lock:
+                self._submitted_frames += 1
         except queue.Full:
-            logger.debug("SAMCLIPExtractor: queue full, dropping frame %d.", frame_id)
+            with self._stats_lock:
+                self._dropped_frames += 1
+            logger.warning(
+                "SAMCLIPExtractor: queue full for %.2fs, dropping frame %d. "
+                "Increase sam_clip.queue_size or reduce SAM/CLIP load.",
+                self.submit_timeout_s, frame_id
+            )
 
     def flush(self) -> None:
         """Дождаться обработки всех кадров в очереди."""
@@ -279,7 +421,19 @@ class SAMCLIPExtractor:
         if wait and self._thread is not None:
             self._thread.join(timeout=join_timeout_s)
         self._running = False
-        logger.info("SAMCLIPExtractor stopped.")
+        logger.info("SAMCLIPExtractor stopped. stats=%s", self.stats())
+
+    def stats(self) -> dict:
+        with self._stats_lock:
+            return {
+                "submitted_frames": int(self._submitted_frames),
+                "processed_frames": int(self._processed_frames),
+                "failed_frames": int(self._failed_frames),
+                "dropped_frames": int(self._dropped_frames),
+                "queue_size_current": int(self._queue.qsize()),
+                "accepting_submissions": bool(self._accepting_submissions),
+                "running": bool(self._running),
+            }
 
     # ------------------------------------------------------------------
     # Internal
@@ -454,16 +608,30 @@ class SAMCLIPExtractor:
 
         for level in _LEVELS:
             masks_lvl = self._masks_at_level(masks_all, level)
+            embs = self._embed_masks(image_rgb, masks_lvl)
+            if len(masks_lvl) > 0 and embs.shape[0] > 0:
+                if self.corrclip_mask_merge:
+                    masks_lvl, embs = _merge_masks_corrclip_style(
+                        masks_lvl,
+                        embs,
+                        sim_thresh=self.corrclip_merge_sim_thresh,
+                        max_dist_px=self.corrclip_merge_dist_px,
+                    )
+                if self.corrclip_interclass_suppress_alpha > 0.0:
+                    embs = _suppress_interclass_corrclip_style(
+                        embs,
+                        masks_lvl,
+                        alpha=self.corrclip_interclass_suppress_alpha,
+                        sim_thresh=self.corrclip_interclass_sim_thresh,
+                        sigma_px=self.corrclip_interclass_sigma_px,
+                    )
 
-            # Сегментационная карта для уровня
+            # Build segmentation map AFTER CorrCLIP-style refinement/merge.
             seg_map = -np.ones((H, W), dtype=np.int32)
             for i, m in enumerate(masks_lvl):
-                seg_map[m['segmentation']] = i + cumsum
-
+                seg_map[m["segmentation"]] = i + cumsum
             seg_maps.append(seg_map)
 
-            # CLIP эмбеддинги (батчами по clip_batch_size, см. _embed_masks)
-            embs = self._embed_masks(image_rgb, masks_lvl)
             if embs.shape[0] > 0:
                 all_embeds.append(embs)
             cumsum += len(masks_lvl)
@@ -498,7 +666,11 @@ class SAMCLIPExtractor:
                 frame_id, color = item
                 try:
                     self._process_frame(frame_id, color)
+                    with self._stats_lock:
+                        self._processed_frames += 1
                 except Exception as exc:
+                    with self._stats_lock:
+                        self._failed_frames += 1
                     logger.error("SAMCLIPExtractor: frame %d failed: %s", frame_id, exc, exc_info=True)
             finally:
                 self._queue.task_done()

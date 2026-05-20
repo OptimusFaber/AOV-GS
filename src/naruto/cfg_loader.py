@@ -64,6 +64,14 @@ def override_cfg(
                 del cfg['clip']
         # use_clip == 1 → keep whatever the config file defines (no action needed)
 
+    if hasattr(args, "corrclip") and args.corrclip is not None and hasattr(cfg, "sam_clip"):
+        if cfg.sam_clip is None:
+            pass
+        elif int(args.corrclip) == 0:
+            cfg.sam_clip.corrclip_mask_merge = False
+            cfg.sam_clip.corrclip_interclass_suppress_alpha = 0.0
+        # corrclip == 1 → keep values from the config file.
+
     return cfg
 
 
@@ -88,6 +96,15 @@ def argument_parsing() -> argparse.Namespace:
     parser.add_argument("--use_clip", type=int, default=None,
                         help="enable open-vocabulary CLIP index. 1: enable, 0: disable. "
                              "Overrides the [clip] section in the config file.")
+    parser.add_argument(
+        "--corrclip",
+        type=int,
+        default=None,
+        choices=[0, 1],
+        help="SAM+CLIP CorrCLIP-style post-processing. "
+             "0: plain SAM masks (no merge/suppression). "
+             "1 or omit: use [sam_clip] config (CorrCLIP on if enabled there).",
+    )
     parser.add_argument("--stage", type=str, default='final',
                         help="ONLY for SplaTAM result evaluation ")
     parser.add_argument("--debug", action="store_true", default=False,
