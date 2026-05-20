@@ -2,7 +2,12 @@
 
 **Краткое имя для репозитория:** `aov-gs` или `OAVGS` (Open / Active Vocabulary + Gaussian Splatting).
 
-Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting). Поддерживаются **четыре готовых пайплайна** обучения/картирования (см. `scripts/aov-gs/pipeline_gs_*.sh`): только геометрия, OneFormer, LangSplat (AE) и LangSplatV2 (codebook). Open-vocab по умолчанию — **ActiveOpenSem** (SAM + CLIP, без OneFormer).
+Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование сцены (**SplaTAM**, 3D Gaussian Splatting) и **открытое языковое поле**. На каждом этапе можно выбрать:
+
+- **Сбор масок:** обычный SAM+CLIP (`sam`) или **CorrCLIP**-постобработка (`corrclip`);
+- **Языковое поле:** **LangSplatV2** (codebook, рекомендуется) или **LangSplat** (legacy + автоэнкодер).
+
+Поддерживаются **пять пайплайнов** (см. `scripts/aov-gs/pipeline_gs_*.sh`): геометрия, OneFormer, unified open-vocab, LangSplat и LangSplatV2.
 
 ---
 
@@ -13,8 +18,12 @@
 3. [Данные Replica + Habitat](#данные-replica--habitat)
 4. [Чекпойнты SAM / CLIP](#чекпойнты-sam--clip)
 5. [Настройка путей в конфигах](#настройка-путей-в-конфигах)
-6. [Пайплайны Gaussian Splatting (4 режима)](#пайплайны-gaussian-splatting-4-режима)
-7. [Публикация на GitHub](#публикация-на-github)
+6. [Пайплайны Gaussian Splatting](#пайплайны-gaussian-splatting)
+7. [Выбор mask collector и lang mode](#выбор-mask-collector-и-lang-mode)
+8. [Инференс и отладка (новые скрипты)](#инференс-и-отладка-новые-скрипты)
+9. [Валидация mIoU на traj](#валидация-miou-на-traj)
+10. [Результаты](#результаты)
+11. [VRAM и `--render_checkpoint`](#vram-и---render_checkpoint)
 
 ---
 
@@ -117,20 +126,53 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 
 ---
 
-## Пайплайны Gaussian Splatting (4 режима)
+## Пайплайны Gaussian Splatting
 
-Все оркестраторы лежат в **`scripts/aov-gs/`**. Перед запуском: `cd` в корень репозитория, conda-окружение активировано, данные Replica подготовлены (см. выше).
+Все оркестраторы лежат в **`scripts/aov-gs/`**. Перед запуском: `cd` в корень репозитория, conda-окружение активировано, данные Replica подготовлены.
 
-Общие аргументы шага **01** (`01_slam_exploration.sh`): `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]`. Для окон OpenCV RGB‑D задайте `ENABLE_VIS=1` (иначе в логе будет `Visualize : 0`).
+| № | Скрипт | Конфиг | Что получаете |
+|---|--------|--------|----------------|
+| 0 | **`pipeline_gs_open_vocab.sh`** | `ActiveOpenSem` | **Unified:** выбор `MASK_COLLECTOR` + `LANG_MODE` в одной команде |
+| 1 | `pipeline_gs_no_segmenter.sh` | `ActiveGS` | Только SplaTAM, без `language_features/` |
+| 2 | `pipeline_gs_oneformer.sh` | `ActiveSem` | OneFormer, без open-vocab SAM+CLIP |
+| 3 | `pipeline_gs_langsplat.sh` | `ActiveOpenSem` | SAM+CLIP → AE → **LangSplat (legacy)** |
+| 4 | `pipeline_gs_langsplatv2.sh` | `ActiveOpenSem` | SAM+CLIP → **LangSplatV2** (без AE) |
 
-| № | Скрипт | Конфиг `EXP` | Что получаете |
-|---|--------|--------------|----------------|
-| 1 | `pipeline_gs_no_segmenter.sh` | `ActiveGS` | Только SplaTAM / активное GS, **без** сегментатора и без `language_features/`. |
-| 2 | `pipeline_gs_oneformer.sh` | `ActiveSem` | **semsplatam** + **OneFormer** + планировщик `active_gsv2`; семантическая карта, **без** open‑vocab SAM+CLIP на диск. |
-| 3 | `pipeline_gs_langsplat.sh` | `ActiveOpenSem` | SAM + CLIP → `language_features/` → AE → **LangSplat (legacy)**. |
-| 4 | `pipeline_gs_langsplatv2.sh` | `ActiveOpenSem` | SAM + CLIP → **LangSplatV2** (codebook + sparse logits, **без** обязательного AE). |
+### Unified open-vocab (рекомендуется)
 
-**English:** The four shell entry points above map to (1) geometry-only GS, (2) OneFormer-driven semantic ActiveSGM, (3) classic LangSplat with a CLIP autoencoder, (4) LangSplatV2 codebook training. All call `01_slam_exploration.sh` internally with the right `EXP` config.
+```bash
+# LangSplatV2 + plain SAM (defaults)
+bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0
+
+# LangSplatV2 + CorrCLIP, отдельная папка результатов
+bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 corrclip langsplatv2 run_corrclip
+
+# Legacy LangSplat + AE
+bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 sam langsplat run_ls 64 100 s 30000 cuda:0 auto
+```
+
+Аргументы: `[SCENE] [SEED] [ENABLE_VIS] [DEBUG] [MASK_COLLECTOR] [LANG_MODE] [RESULT_RUN] [train args…]`
+
+### Этап 1 — аргументы `01_slam_exploration.sh`
+
+`[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]`
+
+| `MASK_COLLECTOR` | CLI | Поведение |
+|------------------|-----|-----------|
+| `sam` (default) | `--corrclip 0` | Обычный SAM: все маски без merge/suppression |
+| `corrclip` | `--corrclip 1` | CorrCLIP-стиль: merge близких масок + inter-class suppression (пороги в `[sam_clip]` конфига) |
+
+Удобные обёртки: `01_slam_exploration_with_corr_clip.sh` ≡ `MASK_COLLECTOR=corrclip`.
+
+Прямой Python:
+
+```bash
+python src/main/activesgm.py \
+  --cfg configs/Replica/office0/ActiveOpenSem.py \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
+  --corrclip 0   # sam
+# --corrclip 1   # corrclip (из конфига)
+```
 
 ### 1) Без сегментатора
 
@@ -206,7 +248,127 @@ python scripts/train_language_field.py \
   --num_iters     30000 --device cuda:0 --render_checkpoint auto
 ```
 
-Старый режим (только при ручном запуске Python): добавьте `--legacy` и укажите `language_features_dim*` после AE.
+Старый режим: `--lang_mode langsplat` (или `--legacy`) + `language_features_dim*` после AE.
+
+---
+
+## Выбор mask collector и lang mode
+
+### Обучение (`train_language_field.py`)
+
+| Флаг | Значения | Описание |
+|------|----------|----------|
+| `--lang_mode` | `langsplatv2` (default), `langsplat` | V2: codebook + `language_features/`; legacy: AE + `language_features_dim*` |
+| `--legacy` | flag | Алиас `--lang_mode langsplat` |
+
+```bash
+# LangSplatV2
+python scripts/train_language_field.py \
+  --checkpoint .../params0.npz --poses .../keyframe_poses.json \
+  --features_dir .../language_features --level s \
+  --output_dir .../lang_field_sk64_l1 \
+  --lang_mode langsplatv2 --codebook_size 64 --vq_layer_num 1 --topk 4
+
+# LangSplat (legacy)
+python scripts/train_language_field.py \
+  ... --features_dir .../language_features_dim64 \
+  --lang_mode langsplat --latent_dim 64
+```
+
+### Инференс (`query_language_field.py`)
+
+| Флаг | Значения | Описание |
+|------|----------|----------|
+| `--lang_mode` | `auto` (default), `langsplatv2`, `langsplat` | `auto` — по полю `format` в `lang_field.pt` |
+| `--ae_ckpt` | path | **Обязателен** для `langsplat`; для V2 не нужен |
+| `--semantic_mask_mode` | `clip_langsplat`, `sam` | Бинаризация маски: LangSplatV2 heatmap vs SAM argmax |
+
+---
+
+## Инференс и отладка (новые скрипты)
+
+| Скрипт | Назначение |
+|--------|------------|
+| `render_view_from_pose.py` | RGB из одной позы `traj.txt` |
+| `render_query_from_pose.py` | RGB \| heatmap \| sem mask по текстовому запросу (один PNG) |
+| `validate_lang_field_traj.py` | mIoU по всей traj + Habitat GT; пирамида s/m/l |
+| `lang_field_eval_utils.py` | Общие утилиты (poses, levels, mIoU writer) |
+| `lang_pipeline_utils.py` | Парсинг `mask_collector` / `lang_mode` |
+| `run_nvs_validation.py` | NVS метрики (PSNR, SSIM, LPIPS) |
+| `visualize_language_seg_maps.py` | Визуализация `*_s.npy` при обучении |
+
+### Рендер вида
+
+```bash
+python scripts/render_view_from_pose.py \
+  --checkpoint results/.../splatam/final/params.npz \
+  --traj data/replica_sim_nvs/office0/traj.txt \
+  --frame 42 --align_gs_train_frame --scene office0 \
+  --out view_f42.png
+```
+
+![RGB-рендер office0, frame 42](examples/view_f42.png)
+
+### Рендер по текстовому запросу
+
+Выход — **2×2**: Render | Heatmap (+шкала) / GT | Prediction. GT берётся из `results_habitat/semantic/` (нужен `--scene` или `--info_semantic`).
+
+```bash
+python scripts/render_query_from_pose.py \
+  --checkpoint results/.../splatam/final/params.npz \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
+  --traj data/replica_sim_nvs/office0/traj.txt \
+  --frame 42 --align_gs_train_frame --scene office0 \
+  --text "a sofa" --levels all --semantic_mask_thresh 0.50 \
+  --out query_sofa_f42.png
+```
+
+![Запрос «a sofa», office0 — Render | Heatmap / GT | Prediction](examples/query_sofa_f01.png)
+
+### Open-vocab запрос (полный пайплайн)
+
+```bash
+python scripts/query_language_field.py \
+  --checkpoint .../params.npz \
+  --lang_field .../lang_field_sk64_l1/lang_field.pt \
+  --text "a sofa" \
+  --lang_mode auto \
+  --out results/query_sofa
+```
+
+---
+
+## Валидация mIoU на traj
+
+```bash
+python scripts/validate_lang_field_traj.py \
+  --scene office0 \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
+  --traj_txt data/replica_sim_nvs/office0/traj.txt \
+  --align_gs_train_frame \
+  --levels all \
+  --semantic_mask_thresh 0.50 \
+  --out_dir val-results/office0_sml
+```
+
+| Флаг | Описание |
+|------|----------|
+| `--levels` | `all` или подмножество: `s`, `m`, `l`, `s,m` |
+| `--semantic_mask_thresh` | Порог бинаризации heatmap (LangSplatV2 eval) |
+| `--class_name_replace_hyphen_with " "` | Запросы без дефисов (`desk organizer`) |
+| `--negative_from_other_classes` | Негативы = остальные классы сцены |
+
+**Выход:** печатает **mIoU в stdout**; сохраняет `metrics.json`, `pairs.csv`, `miou_summary.txt`, `miou_per_class.csv`.
+
+---
+
+## Результаты
+
+_(раздел будет дополнен)_
+
+---
+
+## VRAM и `--render_checkpoint`
 
 ### VRAM (ориентиры)
 
@@ -221,7 +383,7 @@ python scripts/train_language_field.py \
 |----------|-----------|
 | `off` | Один граф на все 3‑канальные проходы; быстрее, больше VRAM. |
 | `on` | Gradient checkpoint на каждый проход; меньше VRAM. |
-| `auto` | Для legacy — checkpoint при `latent_dim==64`; для V2 — эвристика в `LangSplatam` (как в AOV-GS-V2). |
+| `auto` | Для legacy — checkpoint при `latent_dim==64`; для V2 — эвристика в `LangSplatam`. |
 
 ### Запросы к языковому полю (режимы 3–4)
 
@@ -240,34 +402,13 @@ bash scripts/aov-gs/run_query_lang_fields_office0.sh \
 
 ---
 
-## Публикация на GitHub
-
-Репозиторий изначально может быть без `.git`. Пример:
-
-```bash
-cd /path/to/aov-gs
-git init
-git branch -M main
-git add .
-git commit -m "Initial commit: AOV-GS open-vocabulary Gaussian splatting pipeline"
-```
-
-Создайте пустой репозиторий на GitHub (имя, например, **`aov-gs`**; в описании можно указать **OAVGS**):
-
-```bash
-git remote add origin https://github.com/<USER>/aov-gs.git
-git push -u origin main
-```
-
-Из-за `.gitignore` на `third_parties/` в самом GitHub-репозитории **нет** тяжёлых зависимостей — только **`.gitmodules`** как шпаргалка по URL. Новым пользователям: см. раздел [Клонирование и `third_parties`](#клонирование-и-third_parties).
-
----
-
 ## Прочие скрипты
 
 - **`scripts/data/`** — загрузка и генерация Replica / MP3D.  
-- **`scripts/evaluation/`** — оценки 3D / семантики / NVS в духе ActiveSGM.  
-- **`scripts/aov-gs/`** — шаги 01–03, гриды, запросы к языковому полю и **оркестраторы** `pipeline_gs_*.sh`.
+- **`scripts/evaluation/`** — оценки 3D / семантики / NVS.  
+- **`scripts/aov-gs/`** — шаги 01–03, гриды, **`pipeline_gs_open_vocab.sh`**.  
+- **`eval_lang_field_segmentation.py`** — старая оценка (один level); для traj используйте **`validate_lang_field_traj.py`**.  
+- **`eval_clip_sam_miou.py`** — baseline 2D SAM+CLIP без 3DGS.
 
 ---
 
