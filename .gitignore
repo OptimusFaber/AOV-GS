@@ -10,7 +10,6 @@
 /results*/
 __pycache__
 *.out
-*.png
 *.idea
 /ckpt/
 /ckpts/
