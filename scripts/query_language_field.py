@@ -11,7 +11,8 @@ Pipeline
    inside the Gaussian hull (``--poses`` omitted): **checkpoint is never used** for
    trajectory; with ``--pose_select relevancy`` the pose is scored by the relevancy map
    (default ``--pose_score_mode global_topmean``, не только патч у проекции центроида).
-6. Render RGB + relevancy heatmap + overlay; SAM point from relevancy peak/COM by default.
+6. Render RGB + relevancy heatmap + overlay; ``semantic.png`` маска по умолчанию как в
+   LangSplatV2 (порог на ``sim_raw``, без SAM / без ``*_s.npy``); старый режим SAM: ``--semantic_mask_mode sam``.
 7. Save 3D scatter map showing all clusters.
 
 Usage
@@ -88,6 +89,23 @@ def encode_query_clip(text: str, clip_model: str, clip_pretrained: str,
     tok = open_clip.get_tokenizer(clip_model)
     with torch.no_grad():
         return F.normalize(clip.encode_text(tok([text]).to(device))[0], dim=-1)
+
+
+def encode_query_clip_batch(
+    texts: list[str],
+    clip_model: str,
+    clip_pretrained: str,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return unit-norm CLIP text embeddings [K,512]."""
+    import open_clip
+    clip, _, _ = open_clip.create_model_and_transforms(
+        clip_model, pretrained=clip_pretrained, device=device)
+    clip.eval()
+    tok = open_clip.get_tokenizer(clip_model)
+    with torch.no_grad():
+        emb = clip.encode_text(tok(texts).to(device))
+    return F.normalize(emb, dim=-1)
 
 
 def encode_query(text: str, clip_model: str, clip_pretrained: str,
@@ -725,6 +743,10 @@ def _render_raw_cosine_map(
     model: LangSplatam,
     clip_query: torch.Tensor,
     ae: "Autoencoder | None",
+    negative_clip_queries: torch.Tensor | None,
+    negative_weight: float,
+    negative_mode: str,
+    negative_relu_floor: bool,
     w2c: torch.Tensor,
     H: int,
     W: int,
@@ -732,10 +754,26 @@ def _render_raw_cosine_map(
     blur_sigma: float,
     *,
     use_v2: bool = False,
+    negative_score_mode: str = 'softmax_pair',
+    softmax_inv_temp: float = 10.0,
 ) -> np.ndarray:
-    """Per-pixel raw cosine(decoded latent, CLIP query); used to rank camera poses by query."""
+    """
+    Карта релевантности запроса по пикселям: для ``softmax_pair`` с негативами —
+    P(query) после blur логитов и softmax; иначе скор из ``_apply_discriminative_score``.
+    """
     batch = 4096
     q = clip_query.to(device).to(torch.float32)
+    use_mc_softmax = (
+        negative_clip_queries is not None
+        and negative_clip_queries.numel() > 0
+        and negative_score_mode == 'softmax_pair'
+    )
+    neg_q = (
+        negative_clip_queries.to(device).to(torch.float32)
+        if use_mc_softmax
+        else None
+    )
+
     with torch.no_grad():
         if use_v2:
             rendered512 = model.render_v2_clip_feature_map(w2c, H, W)
@@ -746,22 +784,110 @@ def _render_raw_cosine_map(
             rendered = model.render_lang(w2c, H, W)
             D = rendered.shape[0]
             r_flat = rendered.permute(1, 2, 0).reshape(-1, D)
+
+        if use_mc_softmax:
+            assert neg_q is not None
+            Kneg = neg_q.shape[0]
+            C = 1 + Kneg
+            logits_flat = torch.empty((r_flat.shape[0], C), device=r_flat.device, dtype=torch.float32)
+            if use_v2:
+                for i in range(0, r_flat.shape[0], batch):
+                    rr = r_flat[i : i + batch]
+                    logits_flat[i : i + rr.shape[0]] = _multiclass_discriminative_logits(
+                        rr, q, neg_q, negative_weight,
+                    )
+            else:
+                assert ae is not None
+                for i in range(0, r_flat.shape[0], batch):
+                    c = ae.decode(r_flat[i : i + batch])
+                    c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
+                    logits_flat[i : i + c.shape[0]] = _multiclass_discriminative_logits(
+                        c, q, neg_q, negative_weight,
+                    )
+            logits_hw = logits_flat.reshape(H, W, C).cpu().numpy().astype(np.float32)
+            logits_hw = _blur_logits_hw(logits_hw, blur_sigma)
+            probs_hw = _softmax_probs_from_logits_hw(logits_hw, softmax_inv_temp, device)
+            return probs_hw[:, :, 0].copy()
+
         sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
         if use_v2:
             for i in range(0, r_flat.shape[0], batch):
-                sim_flat[i : i + batch] = r_flat[i : i + batch] @ q
+                rr = r_flat[i : i + batch]
+                pos = rr @ q
+                sim_flat[i : i + rr.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    rr,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
         else:
             assert ae is not None
             for i in range(0, r_flat.shape[0], batch):
                 c = ae.decode(r_flat[i : i + batch])
                 c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
-                sim_flat[i : i + c.shape[0]] = (c @ q)
-    sim = sim_flat.reshape(H, W)
-    sim_np = sim.cpu().float().numpy()
+                pos = c @ q
+                sim_flat[i : i + c.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    c,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
+    sim_np = sim_flat.reshape(H, W).cpu().float().numpy()
     if blur_sigma > 0.0:
         ksize = int(blur_sigma * 6) | 1
         sim_np = cv2.GaussianBlur(sim_np, (ksize, ksize), blur_sigma)
     return sim_np
+
+
+def _multiclass_discriminative_logits(
+    feat: torch.Tensor,
+    clip_query: torch.Tensor,
+    negative_clip_queries: torch.Tensor,
+    negative_weight: float,
+) -> torch.Tensor:
+    """
+    Собрать логиты для softmax по классам: [запрос, neg_1, …, neg_K].
+    ``feat``: [B, 512], ``clip_query``: [512], ``negative_clip_queries``: [K, 512].
+    """
+    q = clip_query.to(device=feat.device, dtype=torch.float32)
+    nq = negative_clip_queries.to(device=feat.device, dtype=torch.float32)
+    pos = feat @ q  # [B]
+    neg_sim = feat @ nq.T  # [B, K]
+    w = float(negative_weight)
+    return torch.cat([pos.unsqueeze(-1), w * neg_sim], dim=-1)
+
+
+def _blur_logits_hw(logits_hw: np.ndarray, blur_sigma: float) -> np.ndarray:
+    """Gaussian blur по каждому каналу карты логитов [H, W, C] (до softmax)."""
+    if blur_sigma <= 0.0:
+        return logits_hw
+    ksize = int(blur_sigma * 6) | 1
+    out = np.empty_like(logits_hw, dtype=np.float32)
+    for c in range(logits_hw.shape[-1]):
+        out[:, :, c] = cv2.GaussianBlur(
+            logits_hw[:, :, c].astype(np.float32), (ksize, ksize), blur_sigma,
+        )
+    return out
+
+
+def _softmax_probs_from_logits_hw(
+    logits_hw: np.ndarray,
+    inv_temp: float,
+    device: torch.device,
+) -> np.ndarray:
+    """softmax по последней оси; ``logits_hw`` float32 [H, W, C]."""
+    C = logits_hw.shape[-1]
+    tt = torch.from_numpy(logits_hw.astype(np.float32)).to(device)
+    probs = F.softmax(tt.reshape(-1, C) * float(inv_temp), dim=-1)
+    return probs.reshape(logits_hw.shape[0], logits_hw.shape[1], C).detach().cpu().numpy().astype(np.float32)
 
 
 def _patch_mean(sim_np: np.ndarray, xi: int, yi: int, patch_radius: int) -> float:
@@ -769,6 +895,64 @@ def _patch_mean(sim_np: np.ndarray, xi: int, yi: int, patch_radius: int) -> floa
     y0, y1 = max(0, yi - patch_radius), min(H, yi + patch_radius + 1)
     x0, x1 = max(0, xi - patch_radius), min(W, xi + patch_radius + 1)
     return float(np.mean(sim_np[y0:y1, x0:x1]))
+
+
+def _apply_discriminative_score(
+    pos_score: torch.Tensor,
+    feat: torch.Tensor,
+    negative_clip_queries: torch.Tensor | None,
+    negative_weight: float,
+    negative_mode: str,
+    relu_floor: bool,
+    *,
+    negative_score_mode: str = 'softmax_pair',
+    softmax_inv_temp: float = 10.0,
+) -> torch.Tensor:
+    """
+    Negative-aware CLIP cosine scoring.
+
+    - ``softmax_pair`` (default): per-pixel softmax по классам
+      ``[cos+, w·cos_neg1, …, w·cos_negK]`` → вероятности суммы 1;
+      возвращается P(запрос). Каждый негатив — отдельный класс (поле
+      ``negative_mode`` для этого режима не используется).
+
+    - ``subtract``: legacy score = cos+ − w·aggregated_negative; optional ``relu_floor``.
+      Здесь ``negative_mode`` (max/mean) задаёт агрегацию нескольких негативов.
+    """
+    if negative_clip_queries is None or negative_clip_queries.numel() == 0:
+        return pos_score
+
+    neg_sim = feat @ negative_clip_queries.T  # [B, Kneg]
+
+    w = float(negative_weight)
+
+    if negative_score_mode == 'softmax_pair':
+        if neg_sim.shape[1] < 1:
+            return pos_score
+        t = float(softmax_inv_temp)
+        if t <= 0.0:
+            raise ValueError(f'softmax_inv_temp must be > 0, got {softmax_inv_temp!r}')
+        logits = torch.cat([pos_score.unsqueeze(-1), w * neg_sim.to(dtype=pos_score.dtype)], dim=-1)
+        logits = logits * t
+        return F.softmax(logits, dim=-1)[..., 0]
+
+    if negative_mode == 'max':
+        neg = neg_sim.max(dim=1).values
+    elif negative_mode == 'mean':
+        neg = neg_sim.mean(dim=1)
+    else:
+        raise ValueError(f'unknown negative_mode: {negative_mode!r}')
+
+    if negative_score_mode == 'subtract':
+        out = pos_score - w * neg
+        if relu_floor:
+            out = torch.clamp(out, min=0.0)
+        return out
+
+    raise ValueError(
+        f'unknown negative_score_mode: {negative_score_mode!r} '
+        f"(expected 'softmax_pair' or 'subtract')"
+    )
 
 
 def _score_sim_map(
@@ -834,8 +1018,14 @@ def best_pose_by_query_relevancy(
     model: LangSplatam,
     ae: "Autoencoder | None",
     clip_query: torch.Tensor,
+    negative_clip_queries: torch.Tensor | None,
+    negative_weight: float,
+    negative_mode: str,
+    negative_relu_floor: bool,
     *,
     use_v2: bool = False,
+    negative_score_mode: str = 'softmax_pair',
+    softmax_inv_temp: float = 10.0,
     margin_px: float,
     z_min: float,
     scene_bounds: tuple[np.ndarray, np.ndarray] | None,
@@ -923,8 +1113,12 @@ def best_pose_by_query_relevancy(
 
             if fid not in sim_cache:
                 sim_cache[fid] = _render_raw_cosine_map(
-                    model, clip_query, ae, w2c, H, W, device, blur_sigma,
+                    model, clip_query, ae,
+                    negative_clip_queries, negative_weight, negative_mode, negative_relu_floor,
+                    w2c, H, W, device, blur_sigma,
                     use_v2=use_v2,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
                 )
             sim_np = sim_cache[fid]
             sc = _score_sim_map(
@@ -963,7 +1157,7 @@ def best_pose_by_query_relevancy(
 
 
 # ---------------------------------------------------------------------------
-# Rendering (identical to SplaTAM eval)
+# Rendering (SplaTAM-AOV ``eval`` convention: first-frame camera + per-view gt_w2c)
 # ---------------------------------------------------------------------------
 
 def render_rgb(model: LangSplatam, w2c: torch.Tensor, H: int, W: int) -> np.ndarray:
@@ -971,8 +1165,8 @@ def render_rgb(model: LangSplatam, w2c: torch.Tensor, H: int, W: int) -> np.ndar
     from utils.slam_helpers import transformed_params2rendervar
     from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
-    cam = model._setup_camera(H, W, w2c)
-    tr  = model._transform_gaussians(w2c)
+    cam = model._setup_camera(H, W, model.first_frame_w2c)
+    tr = model._eval_style_transformed_gaussians(w2c)
     rv  = transformed_params2rendervar(model.params, tr)
     with torch.no_grad():
         rgb, _, _ = Renderer(raster_settings=cam)(**rv)
@@ -989,9 +1183,13 @@ def _normalize_relevancy_map(
     """
     Map raw cosine similarities to [0, 1] for visualization.
 
-    ``percentile`` (default): stretch only the top part of the distribution
-    (p_low … p_high); avoids turning global noise into full-range red/yellow.
+    ``cosine01``: после blur клип в [-1,1], линейно в [0,1] как (cos+1)/2; если cos почти
+    постоянен по кадру, контраст на JET почти нулевой (для LangSplatV2 обычно лучше percentile).
+    ``percentile``: stretch (p_low … p_high); меньше шума на фоне.
     """
+    if mode == 'cosine01':
+        x = np.clip(sim_np.astype(np.float64), -1.0, 1.0)
+        return np.clip((x + 1.0) * 0.5, 0.0, 1.0).astype(np.float32)
     if mode == 'minmax':
         lo, hi = float(sim_np.min()), float(sim_np.max())
         return np.clip((sim_np - lo) / (hi - lo + 1e-8), 0.0, 1.0)
@@ -1002,33 +1200,221 @@ def _normalize_relevancy_map(
     return np.clip((sim_np - lo) / (hi - lo), 0.0, 1.0)
 
 
+def _relevancy_viz_bounds(
+    sim_np: np.ndarray,
+    mode: str,
+    p_low: float,
+    p_high: float,
+) -> tuple[float, float]:
+    """(lo, hi) used by ``_normalize_relevancy_map`` — same scale as JET colors on overlay."""
+    if mode == 'cosine01':
+        return 0.0, 1.0
+    if mode == 'minmax':
+        lo, hi = float(sim_np.min()), float(sim_np.max())
+    else:
+        lo = float(np.percentile(sim_np, p_low))
+        hi = float(np.percentile(sim_np, p_high))
+    if hi <= lo + 1e-8:
+        hi = lo + 1e-8
+    return lo, hi
+
+
+def w2c_gaussian_frame_from_replica_c2w(
+    c2w_replica: np.ndarray,
+    c2w_train0_replica: np.ndarray,
+) -> np.ndarray:
+    """
+    Поза replica_sim → ``w2c`` в **системе координат Gaussian checkpoint** SplaTAM/LangSplatam:
+    ``inv(c2w_nvs) @ c2w_train0``.
+
+    ``LangSplatam.render_lang`` / ``render_rgb`` ожидают именно такую **опорную** связку
+    (см. ``scripts/render_query_from_pose.py``, ``scripts/validate_lang_field_traj.py``).
+    Если чекпойнт обучался с тем же NVS ``traj.txt``, без Replica обычно достаточно
+    ``inv(c2w_i) @ c2w_nvs[0]`` (первая строка вашего траекта).
+
+    Обе матрицы — camera-to-world в одной глобальной Replica (RDF); ``c2w_train0`` — первая
+    строка ``data/Replica/<scene>/traj.txt``.
+    """
+    a = np.asarray(c2w_replica, dtype=np.float64).reshape(4, 4)
+    b = np.asarray(c2w_train0_replica, dtype=np.float64).reshape(4, 4)
+    return (np.linalg.inv(a) @ b).astype(np.float64)
+
+
+def _fmt_viz_score(v: float) -> str:
+    av = abs(v)
+    if av >= 100.0 or (av > 0.0 and av < 1e-3):
+        return f'{v:.2e}'
+    return f'{v:.4f}'
+
+
+def _safe_filename_fragment(text: str, max_len: int = 48) -> str:
+    """Фрагмент имени файла из произвольной строки (класс / текст запроса)."""
+    parts: list[str] = []
+    for ch in text.strip():
+        if ch.isalnum():
+            parts.append(ch)
+        elif ch in ' _-':
+            parts.append('_')
+        else:
+            parts.append('_')
+    s = ''.join(parts).strip('_')
+    while '__' in s:
+        s = s.replace('__', '_')
+    return (s[:max_len] if s else 'cls')
+
+
+def overlay_bgr_from_rgb_and_probability_map(
+    rgb_bgr: np.ndarray,
+    prob_hw: np.ndarray,
+    *,
+    heatmap_norm: str,
+    heatmap_p_low: float,
+    heatmap_p_high: float,
+    norm_caption: str,
+    score_title: str = 'P',
+) -> np.ndarray:
+    """RGB + JET(probability) + шкала; ``prob_hw`` в диапазоне [0, 1] (канал softmax)."""
+    pr = np.clip(prob_hw.astype(np.float32), 0.0, 1.0)
+    jet = cv2.applyColorMap((pr * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    blended = cv2.addWeighted(rgb_bgr, 0.55, jet, 0.45, 0)
+    return overlay_with_relevancy_colorbar_left(
+        blended,
+        0.0,
+        1.0,
+        heatmap_norm=heatmap_norm,
+        heatmap_p_low=heatmap_p_low,
+        heatmap_p_high=heatmap_p_high,
+        score_title=score_title,
+        norm_caption=norm_caption,
+    )
+
+
+def overlay_with_relevancy_colorbar_left(
+    overlay_bgr: np.ndarray,
+    lo: float,
+    hi: float,
+    *,
+    heatmap_norm: str,
+    heatmap_p_low: float,
+    heatmap_p_high: float,
+    score_title: str = 'score',
+    norm_caption: str | None = None,
+    bar_px: int = 24,
+    label_px: int = 76,
+    gap_px: int = 5,
+    margin_y: int = 10,
+    n_ticks: int = 5,
+) -> np.ndarray:
+    """
+    Concatenate [numeric scale | JET strip | gap | ``overlay_bgr``].
+
+    The JET strip runs top = ``hi`` (red) → bottom = ``lo`` (blue), matching
+    ``render_relevancy_map`` after ``_normalize_relevancy_map``.
+    """
+    H, _W, _ = overlay_bgr.shape
+    if H < 48:
+        return overlay_bgr.copy()
+
+    t = np.linspace(255, 0, H, dtype=np.uint8)
+    bar = cv2.applyColorMap(t.reshape(H, 1), cv2.COLORMAP_JET)
+    # ``bar`` is (H, 1, 3); must tile axis=1 only — ``np.tile(bar, (1, k))`` prepends
+    # reps to (1, 1, k) and tiles the *last* axis → wrong shape (H, 1, 3*k).
+    bw = max(4, int(bar_px))
+    bar = np.tile(bar, (1, bw, 1))
+
+    lw = max(52, int(label_px))
+    labels = np.zeros((H, lw, 3), dtype=np.uint8)
+    labels[:] = (36, 36, 36)
+
+    cap = (
+        norm_caption
+        if norm_caption is not None
+        else (
+            f'p{heatmap_p_low:g}-{heatmap_p_high:g}%'
+            if heatmap_norm == 'percentile'
+            else 'min-max'
+        )
+    )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fs_cap = max(0.32, min(0.5, H / 850.0))
+    header_h = min(H // 4, 52)
+    cv2.putText(labels, score_title, (4, margin_y + 12), font, fs_cap, (210, 210, 210), 1, cv2.LINE_AA)
+    cv2.putText(labels, cap, (4, margin_y + 12 + int(18 * fs_cap / 0.4)), font, fs_cap * 0.9, (170, 170, 170), 1, cv2.LINE_AA)
+
+    fs = max(0.32, min(0.62, H / 650.0))
+    nt = max(2, min(int(n_ticks), H // 20))
+    vals = np.linspace(hi, lo, nt)
+    y0 = header_h + 4
+    y1 = H - margin_y
+    for i, v in enumerate(vals):
+        y = int(round(y0 + (y1 - y0) * (i / (nt - 1)))) if nt > 1 else (y0 + y1) // 2
+        txt = _fmt_viz_score(float(v))
+        (tw, th), _ = cv2.getTextSize(txt, font, fs, 1)
+        x = max(2, lw - tw - 4)
+        yy = min(H - 3, max(th + 2, y))
+        cv2.putText(labels, txt, (x, yy), font, fs, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(labels, txt, (x, yy), font, fs, (250, 250, 250), 1, cv2.LINE_AA)
+
+    gap = np.full((H, max(2, int(gap_px)), 3), 255, dtype=np.uint8)
+    return np.hstack([labels, bar, gap, overlay_bgr])
+
+
 def render_relevancy_map(
     model: LangSplatam,
     clip_query: torch.Tensor,    # [512] unit-norm CLIP text emb
     ae: "Autoencoder | None",
+    negative_clip_queries: torch.Tensor | None,
+    negative_weight: float,
+    negative_mode: str,
+    negative_relu_floor: bool,
     w2c: torch.Tensor,
     H: int,
     W: int,
     *,
     use_v2: bool = False,
+    negative_score_mode: str = 'softmax_pair',
+    softmax_inv_temp: float = 10.0,
     heatmap_norm: str = 'percentile',
     heatmap_p_low: float = 8.0,
     heatmap_p_high: float = 98.0,
     blur_sigma: float = 3.0,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    device: torch.device | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[float, float], np.ndarray | None]:
     """
     Render D-dim latent field, decode each pixel to 512d, compute cosine
     with CLIP text embedding.  Comparing in 512d (not latent) is more
     discriminative because the AE may distort relative distances.
 
-    ``blur_sigma`` applies Gaussian blur to the raw similarity map before
-    normalization — this suppresses isolated speckle from alpha-composited
-    multi-Gaussian pixels while keeping spatially-coherent object blobs.
+    Для ``negative_score_mode=softmax_pair`` и непустых ``negative_clip_queries``:
+    по пикселям softmax по классам ``[cos+, w·cos_neg1, …]`` (после Gaussian blur
+    логитов), сумма вероятностей = 1; основная карта и ``sim_raw`` — P(запрос) ∈ [0,1].
+    Пятый элемент возврата — ``per_class_probs`` [H,W,1+K] с P для запроса и каждого
+    негатива; иначе ``None``.
 
-    Returns (jet heatmap BGR, float32 [H,W] normalized to [0,1] for viz,
-    float32 [H,W] raw cosine after blur — для SAM/пика relevancy).
+    В остальных случаях ``blur_sigma`` сглаживает уже итоговую скор-карту; нормализация
+    для JET — ``heatmap_norm`` (percentile / minmax).
+
+    Returns
+    -------
+    jet : BGR uint8 heatmap для запроса
+    norm : float32 [H,W] в [0,1] для отображения запроса
+    sim_raw : float32 [H,W] — сырая карта после blur (для SAM); при softmax multi-class это P(query)
+    (lo, hi) : шкала colorbar (для softmax с негативами обычно 0…1)
+    per_class_probs : [H,W,C] или None
     """
     batch = 4096
+    dev = device if device is not None else w2c.device
+    use_mc_softmax = (
+        negative_clip_queries is not None
+        and negative_clip_queries.numel() > 0
+        and negative_score_mode == 'softmax_pair'
+    )
+    neg_q = (
+        negative_clip_queries.to(dev).to(torch.float32)
+        if use_mc_softmax
+        else None
+    )
+
     with torch.no_grad():
         if use_v2:
             rendered512 = model.render_v2_clip_feature_map(w2c, H, W)
@@ -1041,31 +1427,348 @@ def render_relevancy_map(
             r_flat = rendered.permute(1, 2, 0).reshape(-1, D)    # [H*W, D]
 
         q = clip_query.to(r_flat.device).to(torch.float32)
+
+        if use_mc_softmax:
+            assert neg_q is not None
+            Kneg = neg_q.shape[0]
+            C = 1 + Kneg
+            logits_flat = torch.empty((r_flat.shape[0], C), device=r_flat.device, dtype=torch.float32)
+            if use_v2:
+                for i in range(0, r_flat.shape[0], batch):
+                    rr = r_flat[i : i + batch]
+                    logits_flat[i : i + rr.shape[0]] = _multiclass_discriminative_logits(
+                        rr, q, neg_q, negative_weight,
+                    )
+            else:
+                assert ae is not None
+                for i in range(0, r_flat.shape[0], batch):
+                    c = ae.decode(r_flat[i : i + batch])
+                    c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
+                    logits_flat[i : i + c.shape[0]] = _multiclass_discriminative_logits(
+                        c, q, neg_q, negative_weight,
+                    )
+            logits_hw = logits_flat.reshape(H, W, C).cpu().numpy().astype(np.float32)
+            logits_hw = _blur_logits_hw(logits_hw, blur_sigma)
+            probs_hw = _softmax_probs_from_logits_hw(logits_hw, softmax_inv_temp, dev)
+            sim_np = probs_hw[:, :, 0].astype(np.float32, copy=False)
+            lo, hi = 0.0, 1.0
+            norm = np.clip(sim_np, 0.0, 1.0)
+            jet = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            return jet, norm, sim_np, (lo, hi), probs_hw
+
         sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
         if use_v2:
             for i in range(0, r_flat.shape[0], batch):
-                sim_flat[i : i + batch] = r_flat[i : i + batch] @ q
+                rr = r_flat[i : i + batch]
+                pos = rr @ q
+                sim_flat[i : i + rr.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    rr,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
         else:
             assert ae is not None
             for i in range(0, r_flat.shape[0], batch):
                 c = ae.decode(r_flat[i : i + batch])
                 c = F.normalize(c, p=2, dim=-1).to(torch.float32)  # [B,512]
-                sim_flat[i : i + c.shape[0]] = (c @ q)
-    sim = sim_flat.reshape(H, W)                         # [H, W]
-    sim_np = sim.cpu().float().numpy()
+                pos = c @ q
+                sim_flat[i : i + c.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    c,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
+    sim_np = sim_flat.reshape(H, W).cpu().float().numpy()
 
-    # Spatial blur to suppress single-Gaussian speckle
     if blur_sigma > 0.0:
         ksize = int(blur_sigma * 6) | 1   # always odd
         sim_np = cv2.GaussianBlur(sim_np, (ksize, ksize), blur_sigma)
 
+    lo, hi = _relevancy_viz_bounds(sim_np, heatmap_norm, heatmap_p_low, heatmap_p_high)
     norm = _normalize_relevancy_map(sim_np, heatmap_norm, heatmap_p_low, heatmap_p_high)
     jet = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
-    return jet, norm, sim_np.astype(np.float32)
+    return jet, norm, sim_np.astype(np.float32), (lo, hi), None
+
+
+def render_relevancy_dual_heatmaps(
+    model: LangSplatam,
+    clip_query: torch.Tensor,
+    ae: "Autoencoder | None",
+    negative_clip_queries: torch.Tensor | None,
+    negative_weight: float,
+    negative_mode: str,
+    negative_relu_floor: bool,
+    w2c: torch.Tensor,
+    H: int,
+    W: int,
+    *,
+    use_v2: bool = False,
+    negative_score_mode: str = 'softmax_pair',
+    softmax_inv_temp: float = 10.0,
+    heatmap_p_low: float = 8.0,
+    heatmap_p_high: float = 98.0,
+    blur_sigma: float = 3.0,
+    device: torch.device | None = None,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    tuple[float, float],
+    tuple[float, float],
+    np.ndarray | None,
+]:
+    """
+    Один проход рендера поля → две JET-карты запроса:
+
+    - **scale01**: для softmax multi-class — P(query) ∈ [0,1]; иначе ``(clip(cos,±1)+1)/2`` ∈ [0,1].
+    - **percentile**: классическая нормализация по перцентилям ``heatmap_p_low/high``.
+
+    Возвращает ``(jet_scale01_bgr, jet_percentile_bgr, sim_raw, bounds_scale01, bounds_pct, per_class_probs)``.
+    """
+    batch = 4096
+    dev = device if device is not None else w2c.device
+    use_mc_softmax = (
+        negative_clip_queries is not None
+        and negative_clip_queries.numel() > 0
+        and negative_score_mode == 'softmax_pair'
+    )
+    neg_q = (
+        negative_clip_queries.to(dev).to(torch.float32)
+        if use_mc_softmax
+        else None
+    )
+
+    with torch.no_grad():
+        if use_v2:
+            rendered512 = model.render_v2_clip_feature_map(w2c, H, W)
+            rendered512 = F.normalize(rendered512, p=2, dim=0)
+            r_flat = rendered512.permute(1, 2, 0).reshape(-1, 512)
+        else:
+            assert ae is not None
+            rendered = model.render_lang(w2c, H, W)
+            D = rendered.shape[0]
+            r_flat = rendered.permute(1, 2, 0).reshape(-1, D)
+
+        q = clip_query.to(r_flat.device).to(torch.float32)
+
+        if use_mc_softmax:
+            assert neg_q is not None
+            Kneg = neg_q.shape[0]
+            C = 1 + Kneg
+            logits_flat = torch.empty((r_flat.shape[0], C), device=r_flat.device, dtype=torch.float32)
+            if use_v2:
+                for i in range(0, r_flat.shape[0], batch):
+                    rr = r_flat[i : i + batch]
+                    logits_flat[i : i + rr.shape[0]] = _multiclass_discriminative_logits(
+                        rr, q, neg_q, negative_weight,
+                    )
+            else:
+                assert ae is not None
+                for i in range(0, r_flat.shape[0], batch):
+                    c = ae.decode(r_flat[i : i + batch])
+                    c = F.normalize(c, p=2, dim=-1).to(torch.float32)
+                    logits_flat[i : i + c.shape[0]] = _multiclass_discriminative_logits(
+                        c, q, neg_q, negative_weight,
+                    )
+            logits_hw = logits_flat.reshape(H, W, C).cpu().numpy().astype(np.float32)
+            logits_hw = _blur_logits_hw(logits_hw, blur_sigma)
+            probs_hw = _softmax_probs_from_logits_hw(logits_hw, softmax_inv_temp, dev)
+            sim_np = probs_hw[:, :, 0].astype(np.float32, copy=False)
+            norm01 = np.clip(sim_np, 0.0, 1.0)
+            jet01 = cv2.applyColorMap((norm01 * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            bounds01: tuple[float, float] = (0.0, 1.0)
+            lo_p, hi_p = _relevancy_viz_bounds(sim_np, 'percentile', heatmap_p_low, heatmap_p_high)
+            norm_pct = _normalize_relevancy_map(sim_np, 'percentile', heatmap_p_low, heatmap_p_high)
+            jet_pct = cv2.applyColorMap((norm_pct * 255).astype(np.uint8), cv2.COLORMAP_JET)
+            return jet01, jet_pct, sim_np.astype(np.float32), bounds01, (lo_p, hi_p), probs_hw
+
+        sim_flat = torch.empty((r_flat.shape[0],), device=r_flat.device, dtype=torch.float32)
+        if use_v2:
+            for i in range(0, r_flat.shape[0], batch):
+                rr = r_flat[i : i + batch]
+                pos = rr @ q
+                sim_flat[i : i + rr.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    rr,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
+        else:
+            assert ae is not None
+            for i in range(0, r_flat.shape[0], batch):
+                c = ae.decode(r_flat[i : i + batch])
+                c = F.normalize(c, p=2, dim=-1).to(torch.float32)
+                pos = c @ q
+                sim_flat[i : i + c.shape[0]] = _apply_discriminative_score(
+                    pos,
+                    c,
+                    negative_clip_queries,
+                    negative_weight,
+                    negative_mode,
+                    negative_relu_floor,
+                    negative_score_mode=negative_score_mode,
+                    softmax_inv_temp=softmax_inv_temp,
+                )
+    sim_np = sim_flat.reshape(H, W).cpu().float().numpy()
+
+    if blur_sigma > 0.0:
+        ksize = int(blur_sigma * 6) | 1
+        sim_np = cv2.GaussianBlur(sim_np, (ksize, ksize), blur_sigma)
+
+    norm01 = _normalize_relevancy_map(sim_np, 'cosine01', heatmap_p_low, heatmap_p_high)
+    jet01 = cv2.applyColorMap((norm01 * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    bounds01: tuple[float, float] = (0.0, 1.0)
+    lo_p, hi_p = _relevancy_viz_bounds(sim_np, 'percentile', heatmap_p_low, heatmap_p_high)
+    norm_pct = _normalize_relevancy_map(sim_np, 'percentile', heatmap_p_low, heatmap_p_high)
+    jet_pct = cv2.applyColorMap((norm_pct * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    return jet01, jet_pct, sim_np.astype(np.float32), bounds01, (lo_p, hi_p), None
+
+
+def gaussian_visible_from_any_pose(
+    means_xyz: np.ndarray,
+    poses_w2c: dict[int, torch.Tensor],
+    intrinsics: torch.Tensor,
+    H: int,
+    W: int,
+    device: torch.device,
+    *,
+    z_min: float = 0.05,
+    margin_px: float = 0.0,
+) -> np.ndarray:
+    """
+    Булева маска [N]: центр гауссиана виден хотя бы из одной камеры
+    (перед плоскостью z>z_min и внутри кадра с отступом ``margin_px``).
+    """
+    N = int(means_xyz.shape[0])
+    visible = np.zeros((N,), dtype=bool)
+    if N == 0 or not poses_w2c:
+        return visible
+    xyz1 = np.concatenate(
+        [means_xyz.astype(np.float64), np.ones((N, 1), dtype=np.float64)],
+        axis=1,
+    )
+    P = torch.tensor(xyz1, dtype=torch.float32, device=device)
+    fx = intrinsics[0, 0].item()
+    fy = intrinsics[1, 1].item()
+    cx = intrinsics[0, 2].item()
+    cy = intrinsics[1, 2].item()
+    m = float(margin_px)
+    for w2c in poses_w2c.values():
+        w2c_d = w2c.to(device=device, dtype=torch.float32)
+        cam = (w2c_d @ P.T).T
+        z = cam[:, 2]
+        ok_z = z > float(z_min)
+        invz = torch.where(ok_z, 1.0 / torch.clamp(z, min=1e-6), torch.zeros_like(z))
+        u = fx * cam[:, 0] * invz + cx
+        v = fy * cam[:, 1] * invz + cy
+        in_img = ok_z & (u >= m) & (u <= float(W - 1) - m) & (v >= m) & (v <= float(H - 1) - m)
+        visible |= in_img.detach().cpu().numpy().astype(bool)
+    return visible
 
 
 # ---------------------------------------------------------------------------
-# Cluster mask on RGB (semantic)
+# ---------------------------------------------------------------------------
+# LangSplatV2-style segmentation mask from rendered relevancy (eval_lerf semantics)
+# ---------------------------------------------------------------------------
+
+
+def langsplat_binary_mask_from_heatmap(
+    heat_hw: np.ndarray,
+    *,
+    thresh: float = 0.4,
+    large_pool: int = 29,
+    smooth_pool: int = 7,
+    device: torch.device | None = None,
+) -> np.ndarray:
+    """
+    Binary mask via the same preprocessing chain as LangSplatV2 ``segmentation_process_cuda``
+    (``eval_lerf.py``): large avg-pool blend → per-frame min–max → ``2*x-1`` clipped →
+    ``> thresh`` → small avg-pool smooth.
+
+    ``heat_hw`` should match ``sim_raw`` from ``render_relevancy_map`` (already blur’d P(query)
+    or cosine score), shape [H, W] float32/float64.
+    """
+    dev = device if device is not None else torch.device('cpu')
+    t = torch.from_numpy(np.asarray(heat_hw, dtype=np.float32)).to(dev)
+    t = t.unsqueeze(0).unsqueeze(0)
+    lk = int(large_pool)
+    lk = lk if lk % 2 == 1 else lk + 1
+    lp = lk // 2
+    pooled = F.avg_pool2d(t, kernel_size=lk, stride=1, padding=lp, count_include_pad=False)
+    fused = 0.5 * (pooled + t)
+
+    plane = fused[0, 0]
+    mn = plane.min()
+    span = plane.max() - mn + 1e-9
+    out = torch.clamp((plane - mn) / span * 2.0 - 1.0, 0.0, 1.0)
+
+    mask = (out > float(thresh)).to(torch.uint8)
+    sk = int(smooth_pool)
+    sk = sk if sk % 2 == 1 else sk + 1
+    sp = sk // 2
+    sm = F.avg_pool2d(mask.float().unsqueeze(0).unsqueeze(0), kernel_size=sk, stride=1,
+                      padding=sp, count_include_pad=False)
+    mask_u8 = (sm > 0.5).to(torch.uint8).squeeze(0).squeeze(0)
+    return mask_u8.detach().cpu().numpy()
+
+
+def langsplat_semantic_panel_bgr(
+    rgb_bgr: np.ndarray,
+    query_mask_u8: np.ndarray,
+    *,
+    fill_color_bgr: tuple[int, int, int] = (0, 220, 0),
+    fill_alpha: float = 0.52,
+    class_label: str = '',
+) -> np.ndarray:
+    """
+    Overlay a single prediction mask over RGB plus optional label at mask centroid (no SAM).
+    """
+    out = rgb_bgr.copy()
+    m = (query_mask_u8 > 0).astype(np.float32)[:, :, None]
+    cfill = np.full_like(out, np.array(fill_color_bgr, dtype=np.uint8))
+    out = (out.astype(np.float32) * (1 - fill_alpha * m) + cfill.astype(np.float32) * (fill_alpha * m)).clip(
+        0, 255
+    ).astype(np.uint8)
+    cnts, _ = cv2.findContours(
+        np.asarray(query_mask_u8 > 0, dtype=np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if cnts:
+        cv2.drawContours(out, cnts, -1, tuple(int(x) for x in fill_color_bgr), 2)
+
+    if class_label.strip():
+        M = cv2.moments(np.asarray(query_mask_u8 > 0, dtype=np.uint8))
+        if M['m00'] > 1e-3:
+            cx = int(M['m10'] / M['m00'])
+            cy = int(M['m01'] / M['m00'])
+        else:
+            cx, cy = 10, 28
+            cy = max(cy, 24)
+        cv2.circle(out, (cx, cy), 7, tuple(int(x) for x in fill_color_bgr), -1)
+        cv2.circle(out, (cx, cy), 7, (255, 255, 255), 2)
+        cv2.putText(out, class_label, (cx + 12, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(out, class_label, (cx + 12, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+
+    return out
+
+
+# Cluster mask on RGB (legacy SAM path for --semantic_mask_mode sam)
 # ---------------------------------------------------------------------------
 
 def project_centroid(centroid: np.ndarray,    # [3] world
@@ -1286,7 +1989,7 @@ def parse_args() -> argparse.Namespace:
         '--traj_format',
         choices=('c2w', 'w2c'),
         default='c2w',
-        help='Как интерпретировать матрицы в traj.txt. По умолчанию c2w (инвертируется в w2c).',
+        help='c2w: w2c_i = inv(c2w_i) @ c2w[0] (система LangSplatam). w2c: w_i @ inv(w[0]).',
     )
     p.add_argument(
         '--auto_pose_samples',
@@ -1307,6 +2010,52 @@ def parse_args() -> argparse.Namespace:
         help='RNG для автопоз.',
     )
     p.add_argument('--text',              required=True)
+    p.add_argument(
+        '--negative_texts',
+        default='',
+        help='Негативные классы через запятую для дискриминативного скоринга, '
+             'например: "table,carpet,sofa".'
+    )
+    p.add_argument(
+        '--negative_weight',
+        type=float,
+        default=0.35,
+        help='subtract: коэффициент в pos−w·neg. softmax_pair: масштаб каждого логита '
+             'негатива w·cos_neg_i в многоклассовом softmax (запрос без множителя w).',
+    )
+    p.add_argument(
+        '--negative_mode',
+        choices=('max', 'mean'),
+        default='max',
+        help='Только для negative_score_mode=subtract: агрегация нескольких негативов '
+             '(max / mean). Для softmax_pair не используется — каждый негатив отдельный класс.',
+    )
+    p.add_argument(
+        '--negative_score_mode',
+        choices=('softmax_pair', 'subtract'),
+        default='softmax_pair',
+        help='При непустых negative_texts: softmax_pair → softmax по [cos+, w·cos_neg1, …]; '
+             'сумма вероятностей по классам = 1, карта запроса = P(query)∈[0,1]; '
+             'subtract → pos−w·neg (негативы агрегируются по --negative_mode).',
+    )
+    p.add_argument(
+        '--softmax_inv_temp',
+        type=float,
+        default=10.0,
+        help='Умножение логитов перед softmax_pair (>0). Выше — резче разделение классов.',
+    )
+    p.add_argument(
+        '--negative_relu_floor',
+        action='store_true',
+        help='Только negative_score_mode=subtract: обрезать score снизу на 0.'
+    )
+    p.add_argument(
+        '--lang_mode',
+        choices=('auto', 'langsplatv2', 'langsplat'),
+        default='auto',
+        help='Сценарий инференса: auto — по format в lang_field.pt; langsplatv2 — codebook; '
+             'langsplat — legacy AE (нужен --ae_ckpt).',
+    )
     p.add_argument(
         '--ae_ckpt',
         default=None,
@@ -1340,8 +2089,34 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument('--top_k_views',       type=int,   default=3,
                    help='Save renders for top-K clusters (default 3)')
+    p.add_argument(
+        '--semantic_mask_mode',
+        choices=('clip_langsplat', 'sam'),
+        default='clip_langsplat',
+        help='Как строить ``*_semantic.png``: clip_langsplat — порог + сглаживание как LangSplatV2 '
+             'eval (без SAM, без *_s.npy); sam — старый оверлей SAM auto-mask + точечный промпт.',
+    )
+    p.add_argument(
+        '--semantic_mask_thresh',
+        type=float,
+        default=0.4,
+        help='Для semantic_mask_mode=clip_langsplat: порог на нормализованном heat после blend '
+             '(как --mask_thresh в LangSplatV2 eval_lerf).',
+    )
+    p.add_argument(
+        '--semantic_mask_large_pool',
+        type=int,
+        default=29,
+        help='Размер большого avg-pool перед порогом (LangSplatV2 eval: 29). Должен быть нечётным.',
+    )
+    p.add_argument(
+        '--semantic_mask_smooth_pool',
+        type=int,
+        default=7,
+        help='Размер avg-pool для сглаживания бинарной маски (LangSplatV2: 7).',
+    )
     p.add_argument('--sam_ckpt',          default='ckpts/sam_vit_b_01ec64.pth',
-                   help='SAM checkpoint for semantic mask (default: vit_b)')
+                   help='SAM checkpoint (only for --semantic_mask_mode sam).')
     p.add_argument(
         '--sam_prompt_from',
         choices=('centroid', 'relevancy_peak', 'relevancy_com'),
@@ -1425,17 +2200,41 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         help='Не фильтровать по ориентации камеры (если сцена не Y-up).',
     )
-    p.add_argument('--heatmap_norm', choices=('percentile', 'minmax'), default='percentile',
-                   help='Нормализация тепловой карты: percentile уменьшает «пёстрость» от min–max.')
+    p.add_argument(
+        '--heatmap_norm',
+        choices=('cosine01', 'percentile', 'minmax'),
+        default='percentile',
+        help='percentile (по умолчанию): контрастная карта; шкала colorbar = сырое cos на перцентилях. '
+             'cosine01: (clip(cos,±1)+1)/2 ∈ [0,1] — при узком диапазоне cos карта почти однотонная. '
+             'minmax: растяжение по min–max кадра.',
+    )
     p.add_argument('--heatmap_p_low', type=float, default=8.0,
                    help='Нижний перцентиль сырого cos-сходства (только для percentile).')
     p.add_argument('--heatmap_p_high', type=float, default=98.0,
                    help='Верхний перцентиль (только для percentile).')
     p.add_argument('--heatmap_blur', type=float, default=3.0,
                    help='Sigma Gaussian blur на карте схожести (px). 0 = без blur.')
+    p.add_argument(
+        '--save_outputs',
+        type=str,
+        default='rgb,relevancy,overlay,semantic,global,clusters3d',
+        help='Через запятую: что писать на диск. Ключи: rgb, relevancy, overlay, semantic, '
+             'global (префикс без _cluster*), clusters3d. Или all = всё (как раньше).',
+    )
     p.add_argument('--out',               required=True,
-                   help='Output prefix.  Produces <out>_cluster<N>_rgb/overlay/3d.png')
+                   help='Output prefix.  Produces <out>_cluster<N>_rgb/overlay/… по --save_outputs')
     return p.parse_args()
+
+
+def _parse_save_outputs(s: str) -> set[str]:
+    parts = [x.strip().lower() for x in str(s).split(',') if x.strip()]
+    if not parts or 'all' in parts:
+        return {'rgb', 'relevancy', 'overlay', 'semantic', 'global', 'clusters3d'}
+    allowed = {'rgb', 'relevancy', 'overlay', 'semantic', 'global', 'clusters3d'}
+    bad = set(parts) - allowed
+    if bad:
+        raise ValueError(f'--save_outputs: unknown keys {sorted(bad)!r}; allowed {sorted(allowed)}')
+    return set(parts)
 
 
 def _load_traj_txt(path: Path, *, fmt: str, device: torch.device) -> dict[int, torch.Tensor]:
@@ -1444,12 +2243,17 @@ def _load_traj_txt(path: Path, *, fmt: str, device: torch.device) -> dict[int, t
         arr = arr[None, :]
     if arr.shape[1] != 16:
         raise ValueError(f"{path} must have 16 floats per line (got {arr.shape[1]}).")
-    mats = arr.reshape(-1, 4, 4)
+    mats = arr.reshape(-1, 4, 4).astype(np.float64)
     out: dict[int, torch.Tensor] = {}
     for i in range(mats.shape[0]):
-        m = torch.tensor(mats[i], dtype=torch.float32, device=device)
         if fmt == 'c2w':
-            m = torch.inverse(m)
+            w = np.linalg.inv(mats[i]) @ mats[0]
+            m = torch.tensor(w, dtype=torch.float32, device=device)
+        elif fmt == 'w2c':
+            w = mats[i] @ np.linalg.inv(mats[0])
+            m = torch.tensor(w, dtype=torch.float32, device=device)
+        else:
+            raise ValueError(f'unknown traj_format {fmt!r}')
         out[i] = m
     return out
 
@@ -1460,6 +2264,7 @@ def _load_traj_txt(path: Path, *, fmt: str, device: torch.device) -> dict[int, t
 
 def main() -> None:
     args = parse_args()
+    save_set = _parse_save_outputs(args.save_outputs)
     device = torch.device(args.device)
 
     latent_dim = args.latent_dim if args.latent_dim is not None else infer_latent_dim(
@@ -1473,7 +2278,18 @@ def main() -> None:
     W = int(model.params['org_width'])
     N = int(model.params['means3D'].shape[0])
     print(f'Gaussians: {N}   latent_dim={latent_dim}   Resolution: {H}×{W}')
-    use_v2 = getattr(model, "model_format", "legacy") == "langsplatv2"
+    detected_v2 = getattr(model, "model_format", "legacy") == "langsplatv2"
+    from lang_pipeline_utils import parse_lang_mode  # noqa: E402
+    forced_v2 = parse_lang_mode(args.lang_mode)
+    if forced_v2 is None:
+        use_v2 = detected_v2
+    else:
+        use_v2 = forced_v2
+        if forced_v2 != detected_v2:
+            print(
+                f'[warn] --lang_mode={args.lang_mode} overrides checkpoint format '
+                f'({"langsplatv2" if detected_v2 else "langsplat"}).'
+            )
     if use_v2:
         print('Language field: LangSplatV2 (codebook + sparse coefficients)')
     else:
@@ -1640,7 +2456,24 @@ def main() -> None:
     # CLIP text embedding in 512d (the actual semantic space)
     clip_query = encode_query_clip(
         args.text, args.clip_model, args.clip_pretrained, device)  # [512]
+    negative_texts = [t.strip() for t in str(args.negative_texts).split(',') if t.strip()]
+    negative_clip_queries = None
+    if len(negative_texts) > 0:
+        negative_clip_queries = encode_query_clip_batch(
+            negative_texts, args.clip_model, args.clip_pretrained, device
+        )  # [Kneg, 512]
     print(f'Query: "{args.text}"')
+    if negative_texts:
+        neg_detail = (
+            f'{args.negative_mode}, '
+            if args.negative_score_mode == 'subtract'
+            else ''
+        )
+        print(
+            f'Negative queries ({neg_detail}w={args.negative_weight:.2f}, '
+            f'{args.negative_score_mode}, inv_temp={args.softmax_inv_temp:g}): '
+            + ", ".join(f'"{t}"' for t in negative_texts)
+        )
     print(
         f'Pose selection: {args.pose_select}  '
         f'(pose_score_mode={args.pose_score_mode}, top_frac={args.pose_score_top_frac}, '
@@ -1671,7 +2504,18 @@ def main() -> None:
                 chunk_lat = model.lang_feats.detach()[i : i + batch]
                 chunk_512 = ae.decode(chunk_lat)
             chunk_512 = F.normalize(chunk_512, dim=-1).to(torch.float32)
-            cos = (chunk_512 @ q).clamp(min=0.0)                    # [B]
+            pos = (chunk_512 @ q)                                    # [B]
+            cos = _apply_discriminative_score(
+                pos,
+                chunk_512,
+                negative_clip_queries,
+                args.negative_weight,
+                args.negative_mode,
+                args.negative_relu_floor,
+                negative_score_mode=args.negative_score_mode,
+                softmax_inv_temp=args.softmax_inv_temp,
+            )
+            cos = cos.clamp(min=0.0)
             op = opacity[i : i + cos.shape[0]].to(torch.float32)
             if args.gaussian_score_no_opacity:
                 sc = cos.cpu().numpy()
@@ -1733,6 +2577,12 @@ def main() -> None:
             )
 
     rmap_kw = dict(
+        negative_clip_queries=negative_clip_queries,
+        negative_weight=args.negative_weight,
+        negative_mode=args.negative_mode,
+        negative_relu_floor=args.negative_relu_floor,
+        negative_score_mode=args.negative_score_mode,
+        softmax_inv_temp=args.softmax_inv_temp,
         heatmap_norm=args.heatmap_norm,
         heatmap_p_low=args.heatmap_p_low,
         heatmap_p_high=args.heatmap_p_high,
@@ -1766,8 +2616,7 @@ def main() -> None:
 
     n_save = min(args.top_k_views, len(clusters))
 
-    # Pre-compute SAM masks & best poses for ALL clusters we will draw.
-    # We do this once so each per-cluster image can reuse them.
+    # Per-cluster renders: relevancy heatmaps / overlays; semantic = LangSplatV2-threshold mask or SAM legacy.
     used_fids: set[int] = set()
     min_grav = None if args.no_pose_gravity_filter else (
         None if args.pose_min_gravity <= 0.0 else args.pose_min_gravity
@@ -1791,7 +2640,10 @@ def main() -> None:
             fid, w2c = best_pose_by_query_relevancy(
                 cl['centroid'], poses, model.intrinsics, H, W, device,
                 model, ae, clip_query,
+                negative_clip_queries, args.negative_weight, args.negative_mode, args.negative_relu_floor,
                 use_v2=use_v2,
+                negative_score_mode=args.negative_score_mode,
+                softmax_inv_temp=args.softmax_inv_temp,
                 margin_px=args.pose_margin_px,
                 z_min=args.pose_z_min,
                 scene_bounds=scene_bounds,
@@ -1837,11 +2689,19 @@ def main() -> None:
             "pose_select": str(args.pose_select),
             "pose_score_mode": str(args.pose_score_mode),
             "pose_score_top_frac": float(args.pose_score_top_frac),
+            "negative_texts": negative_texts,
+            "negative_weight": float(args.negative_weight),
+            "negative_mode": str(args.negative_mode),
+            "negative_relu_floor": bool(args.negative_relu_floor),
+            "negative_score_mode": str(args.negative_score_mode),
+            "softmax_inv_temp": float(args.softmax_inv_temp),
             "cluster_rank_by": str(args.cluster_rank_by),
             "gaussian_score_no_opacity": bool(args.gaussian_score_no_opacity),
             "sam_prompt_from": str(args.sam_prompt_from),
             "clusters_found": int(len(clusters)),
             "clusters_saved": int(n_save),
+            "semantic_mask_mode": str(args.semantic_mask_mode),
+            "semantic_mask_thresh": float(args.semantic_mask_thresh),
             "clusters": [
                 {
                     "rank": int(i + 1),
@@ -1917,74 +2777,207 @@ def main() -> None:
         print(f'  upright (Y-up heuristic)={_gstr}  (if always wrong, try --no_pose_gravity_filter)')
 
         rgb     = render_rgb(model, w2c, H, W)
-        jet, _norm, sim_raw = render_relevancy_map(
-            model, clip_query, ae, w2c, H, W, **rmap_kw)
-        overlay = cv2.addWeighted(rgb, 0.55, jet, 0.45, 0)
-
-        # --- _semantic: SAM auto masks + query cluster on top in green ---
-        print(f'    Running SAM auto mask generator for cluster {ci_target+1}...')
-        auto_masks = sam_all_masks(rgb, args.sam_ckpt, device)
-        print(f'    SAM found {len(auto_masks)} masks')
-
-        sem = rgb.copy()
-
-        # 1) All SAM masks in non-green colours
-        for i, mask2d in enumerate(auto_masks):
-            color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
-            sem = _apply_mask(sem, mask2d, color_bgr, alpha=0.35)
-
-        # 2) Query cluster on top — green, via point prompt (пик relevancy или центроид)
-        centroid_xy = project_centroid(
-            cd_target['cl']['centroid'], w2c, model.intrinsics, device)
-        pt_xy = sam_prompt_xy_from_relevancy(
-            sim_raw,
-            args.sam_prompt_from,
-            centroid_xy,
-            H,
-            W,
-            com_top_frac=args.sam_com_top_frac,
+        jet, _norm, sim_raw, (viz_lo, viz_hi), per_cls_probs = render_relevancy_map(
+            model,
+            clip_query,
+            ae,
+            w2c=w2c,
+            H=H,
+            W=W,
+            device=torch.device(args.device),
+            **rmap_kw,
         )
-        if pt_xy is not None:
-            query_mask = sam_mask_from_point(rgb, pt_xy, args.sam_ckpt, device)
-        else:
-            query_mask = np.zeros((H, W), dtype=np.uint8)
-            pt_xy = None
-        sem = _apply_mask(sem, query_mask, GREEN_BGR, alpha=0.55)
+        overlay = cv2.addWeighted(rgb, 0.55, jet, 0.45, 0)
+        bar_kw = dict(
+            heatmap_norm=args.heatmap_norm,
+            heatmap_p_low=args.heatmap_p_low,
+            heatmap_p_high=args.heatmap_p_high,
+        )
+        if per_cls_probs is not None:
+            bar_kw['score_title'] = 'P'
+            bar_kw['norm_caption'] = 'softmax prob [0..1]'
+        elif args.heatmap_norm == 'cosine01':
+            bar_kw['norm_caption'] = 'cos sim → [0,1]'
+            bar_kw['score_title'] = 'score'
+        overlay = overlay_with_relevancy_colorbar_left(
+            overlay, viz_lo, viz_hi, **bar_kw,
+        )
 
-        # Dot + label for the query cluster
-        if pt_xy is not None:
-            cv2.circle(sem, pt_xy, 9, GREEN_BGR, -1)
-            cv2.circle(sem, pt_xy, 9, (255, 255, 255), 2)
-            label = f'#{ci_target+1} << query'
-            cv2.putText(sem, label, (pt_xy[0] + 13, pt_xy[1] + 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(sem, label, (pt_xy[0] + 13, pt_xy[1] + 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+        # --- _semantic: LangSplatV2-style binary mask from relevancy heatmap, or legacy SAM ---
+        if args.semantic_mask_mode == 'clip_langsplat':
+            print(
+                f'    LangSplatV2-style mask from rendered relevancy (cluster {ci_target + 1})…'
+            )
+            query_mask_u8 = langsplat_binary_mask_from_heatmap(
+                sim_raw,
+                thresh=args.semantic_mask_thresh,
+                large_pool=args.semantic_mask_large_pool,
+                smooth_pool=args.semantic_mask_smooth_pool,
+                device=device,
+            )
+            lbl = f'#{ci_target + 1} «{args.text.strip()[:48]}»'.strip()
+            sem = langsplat_semantic_panel_bgr(
+                rgb,
+                query_mask_u8,
+                fill_color_bgr=GREEN_BGR,
+                fill_alpha=0.55,
+                class_label=lbl,
+            )
+        else:
+            print(f'    Running SAM auto mask generator for cluster {ci_target+1}...')
+            auto_masks = sam_all_masks(rgb, args.sam_ckpt, device)
+            print(f'    SAM found {len(auto_masks)} masks')
+
+            sem = rgb.copy()
+
+            # 1) All SAM masks in non-green colours
+            for i, mask2d in enumerate(auto_masks):
+                color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
+                sem = _apply_mask(sem, mask2d, color_bgr, alpha=0.35)
+
+            # 2) Query cluster on top — green, via point prompt (пик relevancy или центроид)
+            centroid_xy = project_centroid(
+                cd_target['cl']['centroid'], w2c, model.intrinsics, device)
+            pt_xy = sam_prompt_xy_from_relevancy(
+                sim_raw,
+                args.sam_prompt_from,
+                centroid_xy,
+                H,
+                W,
+                com_top_frac=args.sam_com_top_frac,
+            )
+            if pt_xy is not None:
+                query_mask = sam_mask_from_point(rgb, pt_xy, args.sam_ckpt, device)
+            else:
+                query_mask = np.zeros((H, W), dtype=np.uint8)
+                pt_xy = None
+            sem = _apply_mask(sem, query_mask, GREEN_BGR, alpha=0.55)
+
+            # Dot + label for the query cluster
+            if pt_xy is not None:
+                cv2.circle(sem, pt_xy, 9, GREEN_BGR, -1)
+                cv2.circle(sem, pt_xy, 9, (255, 255, 255), 2)
+                label = f'#{ci_target+1} << query'
+                cv2.putText(sem, label, (pt_xy[0] + 13, pt_xy[1] + 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(sem, label, (pt_xy[0] + 13, pt_xy[1] + 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
 
         sfx = f'_cluster{ci_target+1}'
-        cv2.imwrite(str(out) + sfx + '_rgb.png',       rgb)
-        cv2.imwrite(str(out) + sfx + '_relevancy.png',  jet)
-        cv2.imwrite(str(out) + sfx + '_overlay.png',   overlay)
-        cv2.imwrite(str(out) + sfx + '_semantic.png',  sem)
-        print(f'    saved {out}{sfx}_{{rgb,relevancy,overlay,semantic}}.png')
+        saved_bits: list[str] = []
+        if 'rgb' in save_set:
+            cv2.imwrite(str(out) + sfx + '_rgb.png', rgb)
+            saved_bits.append('rgb')
+        if 'relevancy' in save_set:
+            cv2.imwrite(str(out) + sfx + '_relevancy.png', jet)
+            saved_bits.append('relevancy')
+            if per_cls_probs is not None:
+                cls_labels = [args.text] + negative_texts
+                for ci in range(per_cls_probs.shape[-1]):
+                    slug = _safe_filename_fragment(cls_labels[ci])
+                    pr = np.clip(per_cls_probs[:, :, ci], 0.0, 1.0)
+                    jet_c = cv2.applyColorMap((pr * 255).astype(np.uint8), cv2.COLORMAP_JET)
+                    tag = 'query' if ci == 0 else f'neg{ci}'
+                    cv2.imwrite(str(out) + sfx + f'_relevancy_{tag}_{slug}.png', jet_c)
+                saved_bits.append(f'relevancy_per_class×{per_cls_probs.shape[-1]}')
+        if 'overlay' in save_set:
+            cv2.imwrite(str(out) + sfx + '_overlay.png', overlay)
+            saved_bits.append('overlay')
+            if per_cls_probs is not None:
+                for ni, neg_label in enumerate(negative_texts):
+                    ci = ni + 1
+                    slug = _safe_filename_fragment(neg_label)
+                    ov_n = overlay_bgr_from_rgb_and_probability_map(
+                        rgb,
+                        per_cls_probs[:, :, ci],
+                        heatmap_norm=args.heatmap_norm,
+                        heatmap_p_low=args.heatmap_p_low,
+                        heatmap_p_high=args.heatmap_p_high,
+                        norm_caption=f'P(neg): {neg_label[:40]}',
+                    )
+                    cv2.imwrite(str(out) + sfx + f'_overlay_neg{ci}_{slug}.png', ov_n)
+                saved_bits.append(f'overlay_neg×{len(negative_texts)}')
+        if 'semantic' in save_set:
+            cv2.imwrite(str(out) + sfx + '_semantic.png', sem)
+            saved_bits.append('semantic')
+        if saved_bits:
+            print(f'    saved {out}{sfx}_{{{"+".join(saved_bits)}}}.png')
 
-    # Global _semantic.png: SAM auto on best-cluster pose, no query highlight
-    if best_cam_pos is not None:
+    # Global bundle (prefix без _cluster*): только если явно указано global
+    if best_cam_pos is not None and 'global' in save_set:
         best_w2c = cluster_data[0]['w2c'] if cluster_data[0]['w2c'] is not None else next(
             cd['w2c'] for cd in cluster_data if cd['w2c'] is not None)
         rgb_best = render_rgb(model, best_w2c, H, W)
-        jet_best, _nb, _sr = render_relevancy_map(
-            model, clip_query, ae, best_w2c, H, W, **rmap_kw)
-        auto_best = sam_all_masks(rgb_best, args.sam_ckpt, device)
-        sem_best = rgb_best.copy()
-        for i, mask2d in enumerate(auto_best):
-            color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
-            sem_best = _apply_mask(sem_best, mask2d, color_bgr, alpha=0.35)
-        cv2.imwrite(str(out) + '_rgb.png',       rgb_best)
-        cv2.imwrite(str(out) + '_relevancy.png',  jet_best)
-        cv2.imwrite(str(out) + '_overlay.png',
-                    cv2.addWeighted(rgb_best, 0.55, jet_best, 0.45, 0))
-        cv2.imwrite(str(out) + '_semantic.png',  sem_best)
+        jet_best, _nb, sr_best, (viz_lo_g, viz_hi_g), per_g = render_relevancy_map(
+            model,
+            clip_query,
+            ae,
+            w2c=best_w2c,
+            H=H,
+            W=W,
+            device=torch.device(args.device),
+            **rmap_kw,
+        )
+        if args.semantic_mask_mode == 'clip_langsplat':
+            qmask_g = langsplat_binary_mask_from_heatmap(
+                sr_best,
+                thresh=args.semantic_mask_thresh,
+                large_pool=args.semantic_mask_large_pool,
+                smooth_pool=args.semantic_mask_smooth_pool,
+                device=device,
+            )
+            lbl_g = f'«{args.text.strip()[:52]}»'
+            sem_best = langsplat_semantic_panel_bgr(
+                rgb_best,
+                qmask_g,
+                fill_color_bgr=GREEN_BGR,
+                fill_alpha=0.55,
+                class_label=lbl_g,
+            )
+        else:
+            auto_best = sam_all_masks(rgb_best, args.sam_ckpt, device)
+            sem_best = rgb_best.copy()
+            for i, mask2d in enumerate(auto_best):
+                color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
+                sem_best = _apply_mask(sem_best, mask2d, color_bgr, alpha=0.35)
+        ov_g = cv2.addWeighted(rgb_best, 0.55, jet_best, 0.45, 0)
+        bar_g = dict(
+            heatmap_norm=args.heatmap_norm,
+            heatmap_p_low=args.heatmap_p_low,
+            heatmap_p_high=args.heatmap_p_high,
+        )
+        if per_g is not None:
+            bar_g['score_title'] = 'P'
+            bar_g['norm_caption'] = 'softmax prob [0..1]'
+        elif args.heatmap_norm == 'cosine01':
+            bar_g['norm_caption'] = 'cos sim → [0,1]'
+            bar_g['score_title'] = 'score'
+        ov_g = overlay_with_relevancy_colorbar_left(ov_g, viz_lo_g, viz_hi_g, **bar_g)
+        cv2.imwrite(str(out) + '_rgb.png', rgb_best)
+        cv2.imwrite(str(out) + '_relevancy.png', jet_best)
+        if per_g is not None:
+            cls_labels = [args.text] + negative_texts
+            for ci in range(per_g.shape[-1]):
+                slug = _safe_filename_fragment(cls_labels[ci])
+                pr = np.clip(per_g[:, :, ci], 0.0, 1.0)
+                jet_c = cv2.applyColorMap((pr * 255).astype(np.uint8), cv2.COLORMAP_JET)
+                tag = 'query' if ci == 0 else f'neg{ci}'
+                cv2.imwrite(str(out) + f'_relevancy_{tag}_{slug}.png', jet_c)
+        cv2.imwrite(str(out) + '_overlay.png', ov_g)
+        if per_g is not None:
+            for ni, neg_label in enumerate(negative_texts):
+                ci = ni + 1
+                slug = _safe_filename_fragment(neg_label)
+                ov_n = overlay_bgr_from_rgb_and_probability_map(
+                    rgb_best,
+                    per_g[:, :, ci],
+                    heatmap_norm=args.heatmap_norm,
+                    heatmap_p_low=args.heatmap_p_low,
+                    heatmap_p_high=args.heatmap_p_high,
+                    norm_caption=f'P(neg): {neg_label[:40]}',
+                )
+                cv2.imwrite(str(out) + f'_overlay_neg{ci}_{slug}.png', ov_n)
+        cv2.imwrite(str(out) + '_semantic.png', sem_best)
         _gf = cluster_data[0]['fid']
         if poses_synthetic:
             print(
@@ -1999,13 +2992,14 @@ def main() -> None:
             )
 
     # 3-D cluster map
-    if best_cam_pos is None:
-        best_cam_pos = cam_positions[0]
-    save_cluster_map(
-        model.params['means3D'].detach().cpu().numpy(),
-        clusters, cam_positions, best_cam_pos,
-        Path(str(out) + '_clusters_3d.png'), args.text,
-    )
+    if 'clusters3d' in save_set:
+        if best_cam_pos is None:
+            best_cam_pos = cam_positions[0]
+        save_cluster_map(
+            model.params['means3D'].detach().cpu().numpy(),
+            clusters, cam_positions, best_cam_pos,
+            Path(str(out) + '_clusters_3d.png'), args.text,
+        )
 
 
 if __name__ == '__main__':
