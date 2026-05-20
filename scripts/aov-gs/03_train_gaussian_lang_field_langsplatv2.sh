@@ -119,7 +119,8 @@ python scripts/train_language_field.py \
     --num_iters          "$NUM_ITERS" \
     --device             "$DEVICE" \
     --render_checkpoint  "$RENDER_CHECKPOINT" \
-    --train_downscale    "$TRAIN_DOWNSCALE"
+    --train_downscale    "$TRAIN_DOWNSCALE" \
+    --lang_mode          langsplatv2
 
 echo ""
 echo "=== Language field обучено ==="

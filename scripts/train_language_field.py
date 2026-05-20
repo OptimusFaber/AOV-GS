@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
+from lang_pipeline_utils import resolve_use_langsplat_v2  # noqa: E402
 from src.slam.langsplatam.langsplatam import LangSplatam
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
@@ -46,7 +48,14 @@ def parse_args() -> argparse.Namespace:
                    help="Масштаб рендера при обучении (0,1]. "
                         "Напр. 0.5 сильно снижает VRAM.")
     p.add_argument("--legacy", action="store_true",
-                   help="Включить старый режим LangSplat (без codebook).")
+                   help="(устар.) То же, что --lang_mode langsplat.")
+    p.add_argument(
+        "--lang_mode",
+        choices=("langsplatv2", "langsplat", "auto"),
+        default="langsplatv2",
+        help="Сценарий после сбора масок: langsplatv2 (codebook, default) или "
+             "langsplat (legacy AE + language_features_dim*).",
+    )
     p.add_argument("--num_iters", type=int, default=30000)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--lambda_l1", type=float, default=1.0)
@@ -74,6 +83,8 @@ def main() -> None:
     if features_dir is None:
         raise ValueError("Укажите --features_dir (или устаревший --features_dim3).")
 
+    use_v2 = resolve_use_langsplat_v2(args.lang_mode, legacy_flag=bool(args.legacy))
+
     logger.info("Загружаем LangSplatam из: %s", args.checkpoint)
     model = LangSplatam(
         checkpoint_path=args.checkpoint,
@@ -87,7 +98,7 @@ def main() -> None:
 
     logger.info(
         "Запускаем обучение language field (mode=%s, level=%s, iters=%d, L=%d, K=%d, topk=%d)...",
-        "legacy" if args.legacy else "LangSplatV2",
+        "LangSplatV2" if use_v2 else "LangSplat",
         args.level,
         args.num_iters,
         args.vq_layer_num,
@@ -104,7 +115,7 @@ def main() -> None:
         lambda_cos=args.lambda_cos,
         output_dir=Path(args.output_dir),
         log_every=args.log_every,
-        use_langsplat_v2=not args.legacy,
+        use_langsplat_v2=use_v2,
         max_init_features=args.max_init_features,
         train_downscale=args.train_downscale,
     )

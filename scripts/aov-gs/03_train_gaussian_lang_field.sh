@@ -109,7 +109,7 @@ python scripts/train_language_field.py \
     --num_iters          "$NUM_ITERS" \
     --device             "$DEVICE" \
     --render_checkpoint  "$RENDER_CHECKPOINT" \
-    --legacy
+    --lang_mode          langsplat
 
 echo ""
 echo "=== Language field обучено ==="
