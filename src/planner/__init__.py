@@ -77,7 +77,21 @@ def init_planner(main_cfg: mmengine.Config, info_printer: InfoPrinter):
             main_cfg,
             info_printer
             )
+    elif main_cfg.planner.method == "active_gs_hybrid":
+        info_printer(
+            "Initialize ActiveGS Hybrid Planner (geometry + SAM+CLIP novelty)...",
+            0,
+            "ActiveGSHybridPlanner",
+        )
+        from src.planner.active_gs_planner_hybrid import ActiveGSHybridPlanner
+        planner = ActiveGSHybridPlanner(
+            main_cfg,
+            info_printer,
+        )
 
     else:
-        assert False, f"Planner choices: [naruto, predefined_traj, active_lang, active_gs]. Current option: [{main_cfg.planner.method}]"
+        assert False, (
+            "Planner choices: [naruto, predefined_traj, active_lang, active_gs, "
+            f"active_gsv2, active_gs_hybrid]. Current option: [{main_cfg.planner.method}]"
+        )
     return planner

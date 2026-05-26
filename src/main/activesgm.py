@@ -233,7 +233,7 @@ if __name__ == "__main__":
         slam.init_exploration_map(T_sim2slam)
 
     planner.init_data(T_sim2slam)
-    if main_cfg.planner.method in ["active_gs","active_gsv2"]:
+    if main_cfg.planner.method in ["active_gs", "active_gsv2", "active_gs_hybrid"]:
         planner.init_local_planner()
 
     ### attach CLIP index to the planner (if available) ###
@@ -259,7 +259,7 @@ if __name__ == "__main__":
             ## convert back to RDF (splatam) ##
             c2w_slam[:3, 1] *= -1 
             c2w_slam[:3, 2] *= -1
-        elif main_cfg.planner.method in ["active_lang", "active_gs","active_gsv2"]:
+        elif main_cfg.planner.method in ["active_lang", "active_gs", "active_gsv2", "active_gs_hybrid"]:
             ## convert back to RUB (habitat) ##
             c2w_sim = c2w_slam.cpu().numpy().copy() # RDF
             c2w_sim[:3, 1] *= -1 
