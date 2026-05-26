@@ -307,7 +307,7 @@ python scripts/render_view_from_pose.py \
   --out view_f42.png
 ```
 
-![RGB-рендер office0, frame 42](examples/view_f42.png)
+![RGB-рендер office0](examples/view_f42.png)
 
 ### Рендер по текстовому запросу
 
