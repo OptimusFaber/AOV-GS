@@ -222,10 +222,11 @@ class ActiveGSPlannerv2(NarutoPlanner):
         Returns:
             sim_pose: Simulator pose
         """
-        sim_pose = slam_pose.clone().to(self.sim2slam.device)
+        device = slam_pose.device if slam_pose.is_cuda else self.sim2slam.device
+        sim_pose = slam_pose.clone().to(device)
         sim_pose[:3, 1] *= -1
         sim_pose[:3, 2] *= -1
-        sim_pose = torch.inverse(self.sim2slam) @ sim_pose
+        sim_pose = torch.inverse(self.sim2slam.to(device)) @ sim_pose
         return sim_pose
     
     def coord_conversion_slam2sim(self, slam_coords: torch.Tensor) -> torch.Tensor:

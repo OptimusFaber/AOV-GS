@@ -371,6 +371,9 @@ def transformed_params2semrendervar_sparse(params, transformed_gaussians, seen):
     return rendervar
 
 def set_camera_sparse(cam, cls_ids=None):
+    n_cls = int(cam.num_channels)
+    cls_ids = cls_ids.contiguous().to(torch.int32)
+    cls_ids = cls_ids.clamp(0, max(n_cls - 1, 0))
     cam = Camera_sparse(
         image_height=cam.image_height,
         image_width=cam.image_width,
@@ -509,6 +512,8 @@ def get_loss_with_seman(params, curr_data, variables, iter_time_idx, loss_weight
     uncertainty = uncertainty.detach()
 
     # Semantic Rendering
+    n_cls = int(curr_data['cam'].num_channels)
+    variables['seman_cls_ids'] = variables['seman_cls_ids'].clamp(0, max(n_cls - 1, 0))
     seman_rendervar = transformed_params2semrendervar_sparse(params, transformed_gaussians, seen)
     sparse_cam = set_camera_sparse(cam=curr_data['cam'],cls_ids=variables['seman_cls_ids'])
     seman_im, _, = SEMRenderer_sparse(raster_settings=sparse_cam)(**seman_rendervar)

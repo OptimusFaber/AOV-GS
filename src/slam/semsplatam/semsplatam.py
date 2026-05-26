@@ -268,7 +268,7 @@ class SemSplatam(SplatamOurs):
         # Intrinsics from dataset metadata only; do not touch dataset frame 0.
         intrinsics = self._get_scaled_camera_intrinsics()
         
-        # Process data - ensure everything is on GPU
+        # Process data - ensure everything is on GPU (full-resolution, used for main rendering camera)
         color_processed = color.permute(2, 0, 1).to(self.device) / 255.0  # (H, W, 3) -> (3, H, W)
         depth_processed = depth.unsqueeze(0).to(self.device)  # (H, W) -> (1, H, W)
         seman_processed = seman.permute(2, 0, 1).to(self.device)  # (H, W, C) -> (C, H, W)
@@ -283,15 +283,42 @@ class SemSplatam(SplatamOurs):
         # Setup Camera
         cam = setup_camera(W, H, intrinsics.cpu().numpy(), w2c.detach().cpu().numpy(), num_channels=self.n_cls)
         
-        # Get Initial Point Cloud
-        mask = (depth_processed > 0)
-        mask = mask.reshape(-1)
+        # Get Initial Point Cloud — use densification resolution when configured
+        dataset_config = self.config["data"]
+        init_color = color_processed
+        init_depth = depth_processed
+        init_seman = seman_processed
+        init_intrinsics = intrinsics
+        if ("densification_image_height" in dataset_config) and ("densification_image_width" in dataset_config):
+            ds_h = int(dataset_config["densification_image_height"])
+            ds_w = int(dataset_config["densification_image_width"])
+            if (ds_h > 0) and (ds_w > 0) and ((ds_h != H) or (ds_w != W)):
+                init_color = F.interpolate(color_processed.unsqueeze(0), (ds_h, ds_w), mode="bilinear", align_corners=False)[0]
+                init_depth = F.interpolate(depth_processed.unsqueeze(0), (ds_h, ds_w), mode="nearest")[0]
+                init_seman = F.interpolate(seman_processed.unsqueeze(0), (ds_h, ds_w), mode="bilinear", align_corners=False)[0]
+
+                init_fx = intrinsics[0, 0] * ds_w / W
+                init_fy = intrinsics[1, 1] * ds_h / H
+                init_cx = intrinsics[0, 2] * ds_w / W
+                init_cy = intrinsics[1, 2] * ds_h / H
+                init_intrinsics = torch.tensor(
+                    [[init_fx, 0, init_cx], [0, init_fy, init_cy], [0, 0, 1]],
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+
+        mask = (init_depth > 0).reshape(-1)
         
         init_pt_cld, mean3_sq_dist = get_pointcloud_with_seman(
-            color_processed, depth_processed, seman_processed, intrinsics, w2c,
+            init_color, init_depth, init_seman, init_intrinsics, w2c,
             mask=mask, compute_mean_sq_dist=True,
             mean_sq_dist_method=self.config['mean_sq_dist_method']
         )
+
+        valid_pts = torch.isfinite(init_pt_cld).all(dim=1) & torch.isfinite(mean3_sq_dist)
+        init_pt_cld = init_pt_cld[valid_pts]
+        mean3_sq_dist = mean3_sq_dist[valid_pts]
+        mean3_sq_dist = torch.clamp(mean3_sq_dist, min=1e-8)
         
         # Initialize Parameters
         params, variables = initialize_params_with_seman(
@@ -306,7 +333,6 @@ class SemSplatam(SplatamOurs):
         print(f"✅ Initialized {params['means3D'].shape[0]:,} Gaussian points from simulator")
         
         # Setup densification parameters
-        dataset_config = self.config["data"]
         if "densification_image_height" not in dataset_config:
             self.seperate_densification_res = False
             self.densify_intrinsics = intrinsics
@@ -435,9 +461,21 @@ class SemSplatam(SplatamOurs):
                                                    gaussians_grad=False,
                                                    camera_grad=False)
 
+        seen = seen.reshape(-1).bool()
+        n_gauss = params['means3D'].shape[0]
+        if seen.numel() != n_gauss:
+            if seen.numel() > n_gauss:
+                seen = seen[:n_gauss]
+            else:
+                pad = torch.zeros(n_gauss - seen.numel(), dtype=torch.bool, device=seen.device)
+                seen = torch.cat((seen, pad), dim=0)
+
+        cls_ids = variables['seman_cls_ids'].contiguous().to(device=self.device, dtype=torch.int32)
+        cls_ids = cls_ids.clamp(0, max(int(cam.num_channels) - 1, 0))
+
         # Initialize Render Variables
         seman_rendervar = transformed_params2semrendervar_sparse(params, transformed_gaussians, seen)
-        sparse_cam = set_camera_sparse(cam=cam, cls_ids=variables['seman_cls_ids'])
+        sparse_cam = set_camera_sparse(cam=cam, cls_ids=cls_ids)
         logits, _, = SEMRenderer_sparse(raster_settings=sparse_cam)(**seman_rendervar)
 
         self.params['cam_trans'] = cam_trans_og
