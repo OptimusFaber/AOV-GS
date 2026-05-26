@@ -1,6 +1,5 @@
 """
-ActiveOpenSem (office2) — SplaTAM + geometric ``active_gs`` + SAM/CLIP
-(open vocabulary, no OneFormer). Same layout as ``office0/ActiveOpenSem.py``.
+ActiveOpenSem (office2) — SplaTAM + active_gs + SAM/CLIP feature extraction.
 """
 
 import os
@@ -9,7 +8,6 @@ from mmengine.config import read_base
 
 with read_base():
     from ...default import *
-
 
 general = dict(
     dataset="Replica",
@@ -69,12 +67,12 @@ sam_clip = dict(
     queue_size=8,
     clip_batch_size=32,
     max_masks_per_frame=120,
-    corrclip_mask_merge = True,
-    corrclip_merge_sim_thresh = 0.86,
-    corrclip_merge_dist_px = 80.0,
-    corrclip_interclass_suppress_alpha = 0.15,
-    corrclip_interclass_sim_thresh = 0.78,
-    corrclip_interclass_sigma_px = 120.0,
+    corrclip_mask_merge=True,
+    corrclip_merge_sim_thresh=0.86,
+    corrclip_merge_dist_px=80.0,
+    corrclip_interclass_suppress_alpha=0.15,
+    corrclip_interclass_sim_thresh=0.78,
+    corrclip_interclass_sigma_px=120.0,
 )
 
 planner = dict(
