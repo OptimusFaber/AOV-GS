@@ -50,6 +50,10 @@ DEVICE=${5:-cuda:0}
 RENDER_CHECKPOINT=${6:-auto}
 
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_gpu_helpers.sh
+source "${PROJ_DIR}/scripts/aov-gs/_gpu_helpers.sh"
+resolve_train_device DEVICE
+
 cd "$PROJ_DIR"
 
 FINAL_DIR="${RESULT_DIR}/splatam/final"

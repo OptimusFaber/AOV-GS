@@ -55,6 +55,10 @@ RENDER_CHECKPOINT=${8:-auto}
 TRAIN_DOWNSCALE=${9:-1.0}
 
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_gpu_helpers.sh
+source "${PROJ_DIR}/scripts/aov-gs/_gpu_helpers.sh"
+resolve_train_device DEVICE
+
 cd "$PROJ_DIR"
 
 FINAL_DIR="${RESULT_DIR}/splatam/final"

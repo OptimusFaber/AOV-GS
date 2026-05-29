@@ -17,6 +17,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(me
 logger = logging.getLogger(__name__)
 
 
+def _warn_nonzero_cuda_device(device: str) -> None:
+    """Rasterizer extension is only reliable on logical cuda:0."""
+    import re
+
+    m = re.match(r"cuda:(\d+)$", device)
+    if m and int(m.group(1)) != 0:
+        idx = m.group(1)
+        logger.warning(
+            "device=%s: diff_gaussian_rasterization often crashes on cuda:N (N>0). "
+            "Use the shell script (auto-remaps) or run manually:\n"
+            "  CUDA_VISIBLE_DEVICES=%s python %s ... --device cuda:0",
+            device,
+            idx,
+            Path(__file__).name,
+        )
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Language-field fine-tuning on top of a frozen SplaTAM checkpoint."
@@ -60,7 +77,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--lambda_l1", type=float, default=1.0)
     p.add_argument("--lambda_cos", type=float, default=1.0)
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for lang-field training (default cuda:0). "
+        "Rasterizer requires logical cuda:0; use CUDA_VISIBLE_DEVICES to pick a physical GPU.",
+    )
     p.add_argument("--log_every", type=int, default=500)
     p.add_argument(
         "--render_checkpoint",
@@ -77,6 +99,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    _warn_nonzero_cuda_device(args.device)
 
     # --features_dim3 is a legacy alias for --features_dir
     features_dir = args.features_dir or args.features_dim3

@@ -37,7 +37,8 @@
 #   K                  – размер codebook (K), по умолч. 64
 #   LEVEL              – уровень SAM: s/m/l, по умолч. s
 #   NUM_ITERS          – итерации, по умолч. 30000
-#   DEVICE             – cuda:0 / cuda:1, по умолч. cuda:0
+#   DEVICE             – cuda:0 (default) or physical GPU index as cuda:N
+#                        (cuda:1 → CUDA_VISIBLE_DEVICES=1, logical cuda:0)
 #   L                  – число уровней RVQ (L), по умолч. 1
 #   TOPK               – разрежение top-k по уровням, по умолч. 4
 #   RENDER_CHECKPOINT  – auto | on | off (по умолч. auto)
@@ -65,6 +66,10 @@ TRAIN_DOWNSCALE=${9:-0.5}
 LOG_EVERY=${10:-500}
 
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_gpu_helpers.sh
+source "${PROJ_DIR}/scripts/aov-gs/_gpu_helpers.sh"
+resolve_train_device DEVICE
+
 cd "$PROJ_DIR"
 
 FINAL_DIR="${RESULT_DIR}/splatam/final"
@@ -112,7 +117,7 @@ echo "  VQ layers L  : $VQ_LAYER_NUM"
 echo "  Top-k        : $TOPK"
 echo "  Iterations   : $NUM_ITERS"
 echo "  Output dir   : $OUTPUT_DIR"
-echo "  Device       : $DEVICE"
+print_train_device "$DEVICE"
 echo "  Render ckpt  : $RENDER_CHECKPOINT  (auto|on|off)"
 echo "  Downscale    : $TRAIN_DOWNSCALE"
 echo "  Log / best.pt: every $LOG_EVERY iters (rolling window = $LOG_EVERY)"
