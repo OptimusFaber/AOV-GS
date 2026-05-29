@@ -31,7 +31,7 @@ import torch
 import numpy as np
 import json
 
-from src.naruto.cfg_loader import argument_parsing, load_cfg
+from src.naruto.cfg_loader import argument_parsing, load_cfg, save_cfg_to_json
 from src.planner import init_planner
 from src.slam import init_SLAM_model
 from src.simulator import init_simulator
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     args = argument_parsing()
     info_printer("Loading configuration...", 0, "Initialization")
     main_cfg = load_cfg(args)
-    main_cfg.dump(os.path.join(main_cfg.dirs.result_dir, 'main_cfg.json'))
+    save_cfg_to_json(main_cfg, os.path.join(main_cfg.dirs.result_dir, 'main_cfg.json'))
     info_printer.update_total_step(main_cfg.general.num_iter)
     info_printer.update_scene(main_cfg.general.dataset + " - " + main_cfg.general.scene)
 
