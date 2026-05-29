@@ -70,12 +70,14 @@ def _build_rendervar_lang(params: Dict, transformed: Dict, lang_feats: torch.Ten
         'rotations': F.normalize(transformed['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0,
+        'means2D': torch.zeros_like(
+            params['means3D'], requires_grad=True, device=params['means3D'].device
+        ) + 0,
     }
 
 
-def _load_checkpoint(npz_path: str) -> Dict[str, torch.Tensor]:
-    """Load ``params*.npz`` → dict of CUDA float tensors."""
+def _load_checkpoint(npz_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
+    """Load ``params*.npz`` → dict of float tensors on ``device``."""
     raw = dict(np.load(npz_path, allow_pickle=True))
     params = {}
     skip_keys = {'gt_w2c_all_frames', 'keyframe_time_indices',
@@ -86,7 +88,7 @@ def _load_checkpoint(npz_path: str) -> Dict[str, torch.Tensor]:
             params[k] = v  # keep as numpy
         else:
             try:
-                params[k] = torch.tensor(v).cuda().float()
+                params[k] = torch.tensor(v, device=device, dtype=torch.float32)
             except Exception:
                 params[k] = v
     return params
@@ -131,6 +133,8 @@ class LangSplatam:
         topk: int = 4,
     ) -> None:
         self.device = torch.device(device)
+        if self.device.type == "cuda":
+            torch.cuda.set_device(self.device)
         self.latent_dim = latent_dim
         self.checkpoint_path = checkpoint_path
         self.vq_layer_num = int(vq_layer_num)
@@ -143,8 +147,8 @@ class LangSplatam:
             raise ValueError("render_checkpoint must be 'auto', 'on', or 'off'")
         self._render_checkpoint_mode = render_checkpoint
 
-        # Load frozen GS params
-        self.params = _load_checkpoint(checkpoint_path)
+        # Load frozen GS params (all tensors on self.device)
+        self.params = _load_checkpoint(checkpoint_path, self.device)
         self._freeze_base_params()
 
         # Camera intrinsics (read from checkpoint)
@@ -341,6 +345,23 @@ class LangSplatam:
             out = out + wl @ Cl
         return out
 
+    def _camera_to_device(self, cam, device: torch.device):
+        """Move rasterizer camera tensors to ``device`` (legacy setup_camera)."""
+        device = torch.device(device)
+        updates = {}
+        for attr in ("viewmatrix", "projmatrix", "campos", "bg"):
+            val = getattr(cam, attr, None)
+            if isinstance(val, torch.Tensor):
+                updates[attr] = val.to(device)
+        if not updates:
+            return cam
+        try:
+            return cam._replace(**updates)
+        except AttributeError:
+            for k, v in updates.items():
+                setattr(cam, k, v)
+            return cam
+
     def _setup_camera(self, H: int, W: int, w2c: torch.Tensor):
         """Build a raster_settings camera object (standard 3-channel renderer)."""
         sys.path.insert(0, "third_parties/splatam")
@@ -358,7 +379,13 @@ class LangSplatam:
         intr_np[0, 2] *= sx
         intr_np[1, 2] *= sy
         w2c_np = w2c.detach().cpu().numpy()
-        return _setup_camera(W, H, intr_np, w2c_np)
+        dev = str(self.device)
+        try:
+            return _setup_camera(W, H, intr_np, w2c_np, device=dev)
+        except TypeError:
+            # Older recon_helpers.py without ``device`` kwarg.
+            cam = _setup_camera(W, H, intr_np, w2c_np)
+            return self._camera_to_device(cam, self.device)
 
     def _eval_style_transformed_gaussians(self, gt_w2c_k: torch.Tensor) -> Dict:
         """
@@ -605,6 +632,65 @@ class LangSplatam:
         total = lambda_l1 * l1 + lambda_cos * cos_loss
         return total, l1, cos_loss
 
+    def _make_lang_field_payload(
+        self,
+        level: str,
+        use_langsplat_v2: bool,
+        *,
+        logits: Optional[torch.Tensor] = None,
+        codebooks: Optional[torch.Tensor] = None,
+        lang_feats: Optional[torch.Tensor] = None,
+        extra: Optional[Dict] = None,
+    ) -> Dict:
+        """Build a ``lang_field.pt`` / ``best.pt`` checkpoint dict."""
+        if use_langsplat_v2:
+            if logits is None or codebooks is None:
+                assert self.language_feature_logits is not None
+                assert self.language_feature_codebooks is not None
+                logits = self.language_feature_logits.detach().cpu()
+                codebooks = self.language_feature_codebooks.detach().cpu()
+            else:
+                logits = logits.detach().cpu()
+                codebooks = codebooks.detach().cpu()
+            payload: Dict = {
+                "format": "langsplatv2",
+                "language_feature_logits": logits,
+                "language_feature_codebooks": codebooks,
+                "vq_layer_num": self.vq_layer_num,
+                "codebook_size": self.codebook_size,
+                "topk": self.topk,
+                "latent_dim": self.vq_layer_num * self.codebook_size,
+                "checkpoint_path": self.checkpoint_path,
+                "level": level,
+            }
+        else:
+            if lang_feats is None:
+                lang_feats = self.lang_feats.detach().cpu()
+            else:
+                lang_feats = lang_feats.detach().cpu()
+            payload = {
+                "format": "legacy",
+                "lang_feats": lang_feats,
+                "latent_dim": self.latent_dim,
+                "checkpoint_path": self.checkpoint_path,
+                "level": level,
+            }
+        if extra:
+            payload.update(extra)
+        return payload
+
+    def _save_lang_field_checkpoint(
+        self,
+        path: Path,
+        level: str,
+        use_langsplat_v2: bool,
+        **tensor_kwargs,
+    ) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self._make_lang_field_payload(level, use_langsplat_v2, **tensor_kwargs)
+        torch.save(payload, str(path))
+
     # ------------------------------------------------------------------
     # Main training loop
     # ------------------------------------------------------------------
@@ -625,6 +711,8 @@ class LangSplatam:
         train_downscale: float = 1.0,
     ) -> None:
         """Train language field in legacy or LangSplatV2 mode."""
+        if self.device.type == "cuda":
+            torch.cuda.set_device(self.device)
         # ----- Load poses -----
         with open(str(poses_file), 'r') as f:
             poses_raw = json.load(f)
@@ -799,6 +887,32 @@ class LangSplatam:
                     else:
                         best_lang_feats = self.lang_feats.detach().cpu().clone()
                     best_marker = "  ← best"
+                    if output_dir is not None:
+                        best_path = Path(output_dir) / "best.pt"
+                        if use_langsplat_v2:
+                            bl, bc = best_lang_feats
+                            self._save_lang_field_checkpoint(
+                                best_path,
+                                level,
+                                use_langsplat_v2,
+                                logits=bl,
+                                codebooks=bc,
+                                extra={"best_avg_loss": avg, "best_iter": it},
+                            )
+                        else:
+                            self._save_lang_field_checkpoint(
+                                best_path,
+                                level,
+                                use_langsplat_v2,
+                                lang_feats=best_lang_feats,
+                                extra={"best_avg_loss": avg, "best_iter": it},
+                            )
+                        logger.info(
+                            "Best checkpoint → %s (iter %d, avg loss=%.4f)",
+                            best_path,
+                            it,
+                            avg,
+                        )
 
                 msg = (f"Iter {it:5d}/{num_iters}  "
                        f"loss={avg:.4f}  l1={avg_l1:.4f}  cos={avg_cos:.4f}  "
@@ -830,31 +944,8 @@ class LangSplatam:
 
         # ----- Save -----
         if output_dir is not None:
-            output_dir = Path(output_dir)
-            save_path = output_dir / "lang_field.pt"
-            if use_langsplat_v2:
-                assert self.language_feature_logits is not None
-                assert self.language_feature_codebooks is not None
-                payload = {
-                    "format": "langsplatv2",
-                    "language_feature_logits": self.language_feature_logits.detach().cpu(),
-                    "language_feature_codebooks": self.language_feature_codebooks.detach().cpu(),
-                    "vq_layer_num": self.vq_layer_num,
-                    "codebook_size": self.codebook_size,
-                    "topk": self.topk,
-                    "latent_dim": self.vq_layer_num * self.codebook_size,
-                    "checkpoint_path": self.checkpoint_path,
-                    "level": level,
-                }
-            else:
-                payload = {
-                    "format": "legacy",
-                    "lang_feats": self.lang_feats.detach().cpu(),
-                    "latent_dim": self.latent_dim,
-                    "checkpoint_path": self.checkpoint_path,
-                    "level": level,
-                }
-            torch.save(payload, str(save_path))
+            save_path = Path(output_dir) / "lang_field.pt"
+            self._save_lang_field_checkpoint(save_path, level, use_langsplat_v2)
             logger.info("Language field saved → %s", save_path)
 
     # ------------------------------------------------------------------
