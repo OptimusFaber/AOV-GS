@@ -128,7 +128,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--checkpoint", required=True, help="params*.npz от SplaTAM")
     p.add_argument("--poses", required=True, help="keyframe_poses.json")
     p.add_argument("--out_dir", required=True, help="Куда сохранить PNG + manifest")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for rendering (default cuda:0).",
+    )
     p.add_argument(
         "--latent_dim",
         type=int,

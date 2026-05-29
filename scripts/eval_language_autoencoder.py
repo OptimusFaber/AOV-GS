@@ -381,7 +381,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--decoder_dims",  nargs="+", type=int, default=None)
     p.add_argument("--clip_model",       default="ViT-B-16")
     p.add_argument("--clip_pretrained",  default="laion2b_s34b_b88k")
-    p.add_argument("--device",           default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for AE evaluation (default cuda:0).",
+    )
     p.add_argument("--out_metrics", default=None,
                    help="Сохранить числовые метрики в текстовый файл (key value)")
     return p.parse_args()

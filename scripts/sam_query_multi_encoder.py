@@ -181,7 +181,11 @@ def main() -> None:
         action="store_true",
         help="Дополнительно сохранить semantic__laion_512d.png (8-е изображение)",
     )
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for SAM+CLIP (default cuda:0).",
+    )
     p.add_argument("--top_k", type=int, default=5)
     p.add_argument(
         "--out_dir",

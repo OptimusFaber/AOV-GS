@@ -201,7 +201,11 @@ def main() -> None:
         help="Шаблон текста CLIP, если нет переопределения в JSON (по умолчанию: 'a {class_name}')",
     )
     ap.add_argument("--text_query", default=None, help="Только для режима --class_name")
-    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for SAM+CLIP (default cuda:0).",
+    )
     ap.add_argument("--include_empty_gt", action="store_true")
     ap.add_argument("--max_samples", type=int, default=None)
     args = ap.parse_args()

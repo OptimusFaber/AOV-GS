@@ -552,7 +552,11 @@ def main() -> None:
         nv_p.add_argument("--out", type=str, default=None)
         nv_p.add_argument("--height", type=int, default=None)
         nv_p.add_argument("--width", type=int, default=None)
-        nv_p.add_argument("--device", default="cuda:0")
+        nv_p.add_argument(
+            "--device",
+            default="cuda:0",
+            help="Torch device for rendering (default cuda:0).",
+        )
         nv, rest = nv_p.parse_known_args(sys.argv[1:])
         if not nv.from_nvs_eval:
             raise RuntimeError("internal: expected --from_nvs_eval")

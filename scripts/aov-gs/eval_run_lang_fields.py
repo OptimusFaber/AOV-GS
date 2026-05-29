@@ -109,7 +109,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--result_dir", required=True)
     p.add_argument("--scene_name", required=True)
     p.add_argument("--queries", nargs="+", required=True)
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device passed to query_language_field.py (default cuda:0).",
+    )
     p.add_argument("--poses", default=None, help="Optional keyframe_poses.json; omit to use auto-poses.")
     p.add_argument("--out_dir", default=None)
     p.add_argument("--top_percentile", type=float, default=2.0)

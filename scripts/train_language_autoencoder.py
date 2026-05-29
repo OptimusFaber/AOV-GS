@@ -192,7 +192,11 @@ def parse_args() -> argparse.Namespace:
                    help="Размерности слоёв декодера. Последний должен быть 512. "
                         "По умолчанию [128,256,512]. "
                         "Для LangSplat-совместимого 3d: 16 32 64 128 256 256 512")
-    p.add_argument('--device', default='cuda:0')
+    p.add_argument(
+        '--device',
+        default='cuda:0',
+        help='Torch device for AE training (default cuda:0).',
+    )
     p.add_argument('--skip_train', action='store_true',
                    help="Пропустить обучение, только применить уже обученный энкодер.")
     return p.parse_args()

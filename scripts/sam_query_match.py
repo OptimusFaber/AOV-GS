@@ -259,7 +259,11 @@ def main() -> None:
     )
     p.add_argument("--clip_model", default="ViT-B-16")
     p.add_argument("--clip_pretrained", default="laion2b_s34b_b88k")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for SAM+CLIP (default cuda:0).",
+    )
     p.add_argument("--top_k", type=int, default=10, help="Print & rank top-K masks by similarity")
     p.add_argument(
         "--out",

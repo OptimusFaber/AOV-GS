@@ -99,7 +99,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--feature_level", type=int, default=1, help="0=default, 1=s, 2=m, 3=l")
     p.add_argument("--top_pct", type=float, default=10.0)
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for AE evaluation (default cuda:0).",
+    )
     p.add_argument(
         "--ckpt_glob",
         default=None,

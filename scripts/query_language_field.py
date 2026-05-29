@@ -2064,7 +2064,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument('--clip_model',        default='ViT-B-16')
     p.add_argument('--clip_pretrained',   default='laion2b_s34b_b88k')
-    p.add_argument('--device',            default='cuda:0')
+    p.add_argument(
+        '--device',
+        default='cuda:0',
+        help='Torch device for rendering and CLIP (default cuda:0).',
+    )
     p.add_argument('--top_percentile',    type=float, default=2.0,
                    help='Top-%%  of Gaussians by score to cluster (default 2%%)')
     p.add_argument('--dbscan_eps',        type=float, default=0.15,

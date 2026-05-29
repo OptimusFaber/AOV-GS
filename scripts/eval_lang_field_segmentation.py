@@ -174,7 +174,11 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--clip_model", default="ViT-B-16")
     p.add_argument("--clip_pretrained", default="laion2b_s34b_b88k")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for rendering and CLIP (default cuda:0).",
+    )
     p.add_argument("--out_dir", default=None, help="Default: {result_dir}/lang_field_seg_eval")
     return p.parse_args()
 
