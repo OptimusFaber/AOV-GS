@@ -1265,8 +1265,8 @@ class ActiveGSPlannerv2(NarutoPlanner):
                 dists_sm = torch.nn.functional.softmax(dists, dim=0)
                 for i, cand_pose in enumerate(cand_poses):
                     ### render data from candidate pose ###
-                    _r = gs_slam.render(cand_pose); img, depth, valid_mask = _r[0], _r[1], _r[2]
-                    _, logits = gs_slam.render_semantic(cand_pose,seen)
+                    img, depth, valid_mask, seen = gs_slam.render(cand_pose)
+                    _, logits = gs_slam.render_semantic(cand_pose, seen)
                     # valid_entropy_mask = valid_mask[0].clone()
 
                     ##################################################
@@ -1338,7 +1338,7 @@ class ActiveGSPlannerv2(NarutoPlanner):
             dists = torch.norm(cand_poses[:, :3, 3] - cur_pose[:3, 3], dim=1) + 1e-6 # avoid zero dist case
             dists_sm = torch.nn.functional.softmax(dists, dim=0)
             for i, cand_pose in enumerate(cand_poses):
-                _r = gs_slam.render(cand_pose); color, depth, valid_mask = _r[0], _r[1], _r[2]
+                color, depth, valid_mask, seen = gs_slam.render(cand_pose)
                 cls_ids, logits = gs_slam.render_semantic(cand_pose, seen)
 
                 ### compute REFINE I.G. ###
@@ -1412,7 +1412,7 @@ class ActiveGSPlannerv2(NarutoPlanner):
 
                 ### compute distance between current pose and candidate poses ###
                 for i, cand_pose in enumerate(cand_poses):
-                    _r = gs_slam.render(cand_pose); color, depth, valid_mask = _r[0], _r[1], _r[2]
+                    color, depth, valid_mask, seen = gs_slam.render(cand_pose)
                     pred_cls_ids, pred_logits = gs_slam.render_semantic(cand_pose, seen)
 
                     _, img_h, img_w = color.shape

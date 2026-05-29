@@ -45,7 +45,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=No
         else:
             cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
             cam_tran = params['cam_trans'][..., time_idx].detach()
-        rel_w2c = torch.eye(4).cuda().float()
+        rel_w2c = torch.eye(4, device=cam_tran.device, dtype=cam_tran.dtype)
         rel_w2c[:3, :3] = build_rotation(cam_rot)
         rel_w2c[:3, 3] = cam_tran
     else:
@@ -70,7 +70,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=No
     
     transformed_gaussians = {}
     # Transform Centers of Gaussians to Camera Frame
-    pts_ones = torch.ones(pts.shape[0], 1).cuda().float()
+    pts_ones = torch.ones(pts.shape[0], 1, device=pts.device, dtype=pts.dtype)
     pts4 = torch.cat((pts, pts_ones), dim=1)
     transformed_pts = (rel_w2c @ pts4.T).T[:, :3]
     transformed_gaussians['means3D'] = transformed_pts
