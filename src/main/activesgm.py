@@ -121,7 +121,7 @@ if __name__ == "__main__":
             sam_ckpt_path       = getattr(sam_clip_cfg, 'sam_ckpt_path', 'ckpts/sam_vit_h_4b8939.pth'),
             clip_model          = getattr(sam_clip_cfg, 'clip_model', 'ViT-B-32'),
             clip_pretrained     = getattr(sam_clip_cfg, 'clip_pretrained', 'openai'),
-            device              = getattr(sam_clip_cfg, 'device', 'cuda:1'),
+            device              = getattr(sam_clip_cfg, 'device', 'cuda:0'),
             queue_size          = getattr(sam_clip_cfg, 'queue_size', 8),
             submit_timeout_s    = getattr(sam_clip_cfg, 'submit_timeout_s', 1.0),
             bbox_pad_px         = getattr(sam_clip_cfg, 'bbox_pad_px', 20),
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     open_vocab_index = None
     clip_cfg = getattr(main_cfg, 'clip', None)
     if clip_cfg is not None:
-        clip_device   = getattr(clip_cfg, 'device',       'cuda:1')
+        clip_device   = getattr(clip_cfg, 'device',       'cuda:0')
         clip_model    = getattr(clip_cfg, 'model_name',   'ViT-B-32')
         clip_pretrained = getattr(clip_cfg, 'pretrained', 'openai')
         clip_update_every = getattr(clip_cfg, 'update_every', 10)

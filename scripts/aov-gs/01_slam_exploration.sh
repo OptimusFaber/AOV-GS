@@ -14,16 +14,21 @@
 #   keyframes/frame_*.jpg       – RGB-кейфреймы (только с --debug)
 #
 # Использование:
-#   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN]
+#   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]
 #
 #   ENABLE_VIS: 0 = без окон OpenCV (RGB-D), 1 = показать live-визуализацию (нужен дисплей / X11)
 #   DEBUG:      1 = дополнительно писать keyframes/ и segmentframes/
 #   RESULT_RUN: подпапка результатов (по умолч. run_0)
 #   MASK_COLLECTOR: sam | corrclip — обычный SAM или CorrCLIP-постобработка (7-й аргумент)
 #
+# GPU (env, см. README «Выбор GPU»):
+#   GPU=0              – одна карта (default)
+#   GPU=0,1            – две карты: SLAM на cuda:0, сегментатор на cuda:1
+#   SLAM_DEVICE=cuda:0 SEM_DEVICE=cuda:1  – override без правки конфига
+#
 # Примеры:
 #   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0 run_0 sam
-#   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0 run_corrclip corrclip
+#   GPU=0,1 SLAM_DEVICE=cuda:0 SEM_DEVICE=cuda:1 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
 ##################################################
 
 set -e
@@ -36,7 +41,7 @@ DEBUG=${5:-0}        # 1 = сохранять keyframes/ как JPEG
 RESULT_RUN=${6:-run_0}
 MASK_COLLECTOR=${7:-sam}
 
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES="${GPU:-0}"
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_DIR"
 
@@ -53,6 +58,10 @@ esac
 RESULT_DIR="${PROJ_DIR}/results/Replica/${SCENE}/${EXP}/${RESULT_RUN}"
 mkdir -p "$RESULT_DIR"
 
+DEVICE_ARGS=()
+[[ -n "${SLAM_DEVICE:-}" ]] && DEVICE_ARGS+=(--slam_device "$SLAM_DEVICE")
+[[ -n "${SEM_DEVICE:-}" ]] && DEVICE_ARGS+=(--seg_device "$SEM_DEVICE")
+
 echo "=============================================="
 echo "  Scene      : $SCENE"
 echo "  Config     : configs/Replica/${SCENE}/${EXP}.py"
@@ -61,6 +70,9 @@ echo "  Seed       : $SEED"
 echo "  Visualize  : $ENABLE_VIS"
 echo "  Debug      : $DEBUG"
 echo "  Mask mode  : ${MASK_COLLECTOR} (--corrclip ${CORRCLIP_FLAG})"
+echo "  GPU visible: ${CUDA_VISIBLE_DEVICES}"
+[[ -n "${SLAM_DEVICE:-}" ]] && echo "  SLAM GPU   : ${SLAM_DEVICE}"
+[[ -n "${SEM_DEVICE:-}" ]] && echo "  Seg GPU    : ${SEM_DEVICE}"
 echo "=============================================="
 
 DEBUG_FLAG=""
@@ -72,6 +84,7 @@ python src/main/activesgm.py \
     --result_dir "$RESULT_DIR" \
     --enable_vis "$ENABLE_VIS" \
     --corrclip   "$CORRCLIP_FLAG" \
+    "${DEVICE_ARGS[@]}" \
     $DEBUG_FLAG
 
 echo ""

@@ -58,7 +58,7 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                 sam_ckpt_path=sam_cfg.get("sam_ckpt_path", "ckpts/sam_vit_b_01ec64.pth"),
                 clip_model=sam_cfg.get("clip_model", "ViT-B-16"),
                 clip_pretrained=sam_cfg.get("clip_pretrained", "laion2b_s34b_b88k"),
-                device=sam_cfg.get("device", "cuda:1"),
+                device=sam_cfg.get("device", "cuda:0"),
                 max_masks_per_candidate=sem_cfg.get("max_masks_per_candidate", 40),
                 novelty_aggregation=sem_cfg.get("novelty_aggregation", "mean"),
                 min_bank_masks=sem_cfg.get("min_bank_masks", 1),

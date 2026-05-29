@@ -19,6 +19,7 @@
 #   PARALLEL_LANG=auto    auto|0|1 — parallelize s/m/l on free GPUs
 #   SEED=0
 #   GPU=0,1
+#   SLAM_DEVICE=cuda:0  SEM_DEVICE=cuda:1   override segmenter / SLAM GPU
 #
 # Output:
 #   results/Replica/<scene>/<EXP>/run_N/
@@ -36,7 +37,7 @@ shift 2 || true
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_DIR"
 
-export CUDA_VISIBLE_DEVICES="${GPU:-0,1}"
+export CUDA_VISIBLE_DEVICES="${GPU:-0}"
 SEED="${SEED:-0}"
 ENABLE_VIS="${ENABLE_VIS:-0}"
 TRAIN_DOWNSCALE="${TRAIN_DOWNSCALE:-0.5}"
@@ -81,7 +82,9 @@ bash scripts/ablation/run_with_metrics.sh slam "$RESULT_DIR" \
     --seed "$SEED" \
     --result_dir "$RESULT_DIR" \
     --enable_vis "$ENABLE_VIS" \
-    --corrclip 0
+    --corrclip 0 \
+    ${SLAM_DEVICE:+--slam_device "$SLAM_DEVICE"} \
+    ${SEM_DEVICE:+--seg_device "$SEM_DEVICE"}
 
 # ── Stage 2: validate raw features (LangSplatV2 no-op) ─────────────────────
 bash scripts/aov-gs/02_train_clip_autoencoder_v2_stub.sh "$RESULT_DIR"

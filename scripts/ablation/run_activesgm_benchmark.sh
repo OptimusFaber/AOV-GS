@@ -10,7 +10,7 @@
 # Env:
 #   SEED=0          random seed (default 0)
 #   ENABLE_VIS=0    visualization
-#   GPU=0           CUDA_VISIBLE_DEVICES (default 0,1)
+#   GPU=0           CUDA_VISIBLE_DEVICES (default 0)
 #
 # Output:
 #   results/Replica/<scene>/ActiveSem/run_N/
@@ -22,7 +22,7 @@ set -euo pipefail
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_DIR"
 
-export CUDA_VISIBLE_DEVICES="${GPU:-0,1}"
+export CUDA_VISIBLE_DEVICES="${GPU:-0}"
 SEED="${SEED:-0}"
 ENABLE_VIS="${ENABLE_VIS:-0}"
 EXP="ActiveSem"

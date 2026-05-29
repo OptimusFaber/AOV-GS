@@ -72,6 +72,22 @@ def override_cfg(
             cfg.sam_clip.corrclip_interclass_suppress_alpha = 0.0
         # corrclip == 1 → keep values from the config file.
 
+    slam_dev = getattr(args, "slam_device", None) or os.environ.get("ACTIVESGM_SLAM_DEVICE")
+    seg_dev = getattr(args, "seg_device", None) or os.environ.get("ACTIVESGM_SEM_DEVICE")
+
+    if slam_dev:
+        if not hasattr(cfg.slam, "override") or cfg.slam.override is None:
+            cfg.slam.override = mmengine.Config(dict())
+        cfg.slam.override["primary_device"] = slam_dev
+
+    if seg_dev:
+        if hasattr(cfg.slam, "semantic_device"):
+            cfg.slam.semantic_device = seg_dev
+        if hasattr(cfg, "sam_clip") and cfg.sam_clip is not None:
+            cfg.sam_clip.device = seg_dev
+        if hasattr(cfg, "clip") and cfg.clip is not None:
+            cfg.clip.device = seg_dev
+
     return cfg
 
 
@@ -104,6 +120,20 @@ def argument_parsing() -> argparse.Namespace:
         help="SAM+CLIP CorrCLIP-style post-processing. "
              "0: plain SAM masks (no merge/suppression). "
              "1 or omit: use [sam_clip] config (CorrCLIP on if enabled there).",
+    )
+    parser.add_argument(
+        "--slam_device",
+        type=str,
+        default=None,
+        help="Override SLAM GPU (primary_device in replica_splatam_s.py), e.g. cuda:0. "
+             "Env: ACTIVESGM_SLAM_DEVICE.",
+    )
+    parser.add_argument(
+        "--seg_device",
+        type=str,
+        default=None,
+        help="Override segmenter GPU: semantic_device (OneFormer / ActiveSem) or "
+             "sam_clip.device (SAM+CLIP / ActiveOpenSem). Env: ACTIVESGM_SEM_DEVICE.",
     )
     parser.add_argument("--stage", type=str, default='final',
                         help="ONLY for SplaTAM result evaluation ")

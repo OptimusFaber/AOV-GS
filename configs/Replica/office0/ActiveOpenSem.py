@@ -140,9 +140,9 @@ sam_clip = dict(
     clip_model      = "ViT-B-16",
     clip_pretrained = "laion2b_s34b_b88k",
 
-    # Where to run SAM+CLIP (pick cuda:1 on multi-GPU setups; falls back
-    # to cuda:0 if only one GPU is available).
-    device = "cuda:1",
+    # Where to run SAM+CLIP. Default cuda:0 (single GPU).
+    # Two GPUs: set GPU=0,1 and device="cuda:1", or pass --seg_device cuda:1 / SEM_DEVICE=cuda:1.
+    device = "cuda:0",
 
     # Throughput / memory knobs.
     queue_size          = 8,    # max keyframes in-flight
