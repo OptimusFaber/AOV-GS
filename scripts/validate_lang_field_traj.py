@@ -6,17 +6,23 @@ For each (frame × class): render relevancy at selected SAM levels, pick best le
 (argmax fused heatmap, as LangSplatV2 ``eval_lerf.py``), binarize, compute IoU vs GT.
 
 Writes ``metrics.json``, ``pairs.csv``, ``miou_summary.txt``, ``miou_per_class.csv``.
-Prints overall mIoU to stdout.
+With ``--semsplatam_metrics`` also writes ActiveSem-style frame metrics
+(``miou_g``, ``miou_g_curr``, ``miou_p``, ``miou_p_curr``) to ``semantic_result.txt``.
 
-Example::
+By default ``--eval_preset val_results_sml_levels`` matches
+``val-results-sml-levels/`` (s/m/l, thresh 0.55, hyphen class names,
+default CLIP negatives, ``align_gs_train_frame``).
+
+Example (pair mIoU + frame metrics; pseudo = SAM+CLIP on rendered SplaTAM RGB)::
 
     python scripts/validate_lang_field_traj.py \\
       --scene office0 \\
       --result_dir results/Replica/office0/ActiveOpenSem/run_0 \\
       --traj_txt data/replica_sim_nvs/office0/traj.txt \\
-      --align_gs_train_frame \\
-      --levels all \\
-      --semantic_mask_thresh 0.50
+      --semsplatam_metrics \\
+      --pseudo_source sam_clip \\
+      --pseudo_rgb_source rendered \\
+      --out_dir results/Replica/office0/ActiveOpenSem/run_0/lang_field_traj_eval
 """
 
 from __future__ import annotations
@@ -117,7 +123,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--negative_from_other_classes", action="store_true")
     p.add_argument("--void_class_ids", default="0")
     p.add_argument("--min_gt_pixels", type=int, default=1)
-    p.add_argument("--semantic_mask_thresh", type=float, default=0.4)
+    p.add_argument(
+        "--eval_preset",
+        choices=("none", lfu.EVAL_PRESET_VAL_RESULTS_SML_LEVELS),
+        default=lfu.EVAL_PRESET_VAL_RESULTS_SML_LEVELS,
+        help="Evaluation defaults; val_results_sml_levels = val-results-sml-levels/ "
+        "(s/m/l, thresh 0.55, a desk-organizer queries, default negatives). "
+        "Use none to keep CLI defaults only.",
+    )
+    p.add_argument("--semantic_mask_thresh", type=float, default=0.55)
     p.add_argument("--semantic_mask_large_pool", type=int, default=29)
     p.add_argument("--semantic_mask_smooth_pool", type=int, default=7)
     p.add_argument("--heatmap_blur", type=float, default=3.0)
@@ -129,14 +143,66 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--softmax_inv_temp", type=float, default=10.0)
     p.add_argument("--clip_model", default="ViT-B-16")
     p.add_argument("--clip_pretrained", default="laion2b_s34b_b88k")
-    p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Torch device for rendering and CLIP (default cuda:0). "
+        "With CUDA_VISIBLE_DEVICES=N pass cuda:0 inside the process.",
+    )
     p.add_argument("--no_localization", action="store_true")
     p.add_argument("--allow_mixed_paths", action="store_true")
+    p.add_argument(
+        "--semsplatam_only",
+        action="store_true",
+        help="Skip open-vocab pair mIoU; only compute --semsplatam_metrics (faster).",
+    )
+    p.add_argument(
+        "--semsplatam_metrics",
+        action="store_true",
+        help="Also compute ActiveSem-style frame mIoU (miou_g/_curr, miou_p/_curr) "
+        "and write semantic_result.txt.",
+    )
+    p.add_argument(
+        "--pseudo_source",
+        choices=("none", "oneformer", "sam_clip"),
+        default="sam_clip",
+        help="Pseudo-label source for miou_p when --semsplatam_metrics (default: sam_clip, "
+        "SAM masks + CLIP text queries; oneformer = ActiveSem closed-set baseline).",
+    )
+    p.add_argument(
+        "--pseudo_rgb_source",
+        choices=("rendered", "eval_cache", "habitat_gt"),
+        default="rendered",
+        help="RGB used for pseudo labels: rendered SplaTAM view (default), cached eval_final PNG, "
+        "or Habitat GT frame*.jpg.",
+    )
+    p.add_argument(
+        "--pseudo_eval_stage",
+        default="eval_final",
+        help="SplaTAM eval subdir when --pseudo_rgb_source=eval_cache (default: eval_final).",
+    )
+    p.add_argument(
+        "--class_info_file",
+        default=None,
+        help="OneFormer class map (default: configs/Replica/<scene>/class_info_file.json).",
+    )
+    p.add_argument("--oneformer_checkpoint", default="lly00412/oneformer-replica-finetune")
+    p.add_argument("--ade20k_checkpoint", default="shi-labs/oneformer_ade20k_swin_large")
+    p.add_argument("--sam_ckpt", default="ckpts/sam_vit_b_01ec64.pth")
+    p.add_argument(
+        "--semsplatam_max_frames",
+        type=int,
+        default=-1,
+        help="Limit frames for semsplatam_metrics / pseudo (<=0 = all eval frames).",
+    )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    applied_preset = lfu.apply_eval_preset(args)
+    if applied_preset:
+        print(f"[lang-field-traj] eval_preset={applied_preset}", file=sys.stderr)
     active_levels = lfu.parse_levels(args.levels)
     do_loc = not bool(args.no_localization)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -291,13 +357,28 @@ def main() -> None:
             sem_np = cv2.resize(sem_np.astype(np.int32), (W, H), interpolation=cv2.INTER_NEAREST).astype(np.int64)
         sem_by_fid[fid] = sem_np
 
+    do_semsplatam = bool(args.semsplatam_metrics or args.semsplatam_only)
+    if args.semsplatam_only and not args.semsplatam_metrics:
+        args.semsplatam_metrics = True
+
     work_items: list[tuple[int, str, str, int]] = []
-    for fid in frame_ids_sorted:
-        se = sem_by_fid[fid]
-        for cn, cq in zip(class_names, text_queries):
-            cid_int = lfu.resolve_class_id(cn, name_to_id)
-            if int(np.sum(se == int(cid_int))) >= args.min_gt_pixels:
-                work_items.append((fid, cn, cq, int(cid_int)))
+    if not args.semsplatam_only:
+        for fid in frame_ids_sorted:
+            se = sem_by_fid[fid]
+            for cn, cq in zip(class_names, text_queries):
+                cid_int = lfu.resolve_class_id(cn, name_to_id)
+                if int(np.sum(se == int(cid_int))) >= args.min_gt_pixels:
+                    work_items.append((fid, cn, cq, int(cid_int)))
+    else:
+        eval_fids = frame_ids_sorted
+        if int(args.semsplatam_max_frames) > 0:
+            eval_fids = eval_fids[: int(args.semsplatam_max_frames)]
+        for fid in eval_fids:
+            se = sem_by_fid[fid]
+            for cn, cq in zip(class_names, text_queries):
+                cid_int = lfu.resolve_class_id(cn, name_to_id)
+                if int(np.sum(se == int(cid_int))) >= args.min_gt_pixels:
+                    work_items.append((fid, cn, cq, int(cid_int)))
 
     n_tasks = len(work_items)
     print(
@@ -314,6 +395,7 @@ def main() -> None:
     chosen_lvl_counts = {lvl: 0 for lvl in active_levels}
     tp_all = fp_all = fn_all = 0
     loc_hits = loc_total = 0
+    frame_score_maps: dict[int, dict[str, np.ndarray]] = {}
 
     render_kw_base = dict(
         ae=None,
@@ -344,6 +426,18 @@ def main() -> None:
             heatmaps.append(
                 qlf._render_raw_cosine_map(model, clip_q, w2c=w2c, **render_kw),
             )
+
+        if do_semsplatam:
+            score_map, _, _ = lfu.pick_best_level_fused(
+                heatmaps,
+                active_levels,
+                large_pool=int(args.semantic_mask_large_pool),
+                device=device,
+            )
+            frame_score_maps.setdefault(fid, {})[cn] = score_map
+
+        if args.semsplatam_only:
+            continue
 
         pred_u8, chosen_idx, chosen_lvl, iou, iou_lvl, score_lvl = langsplat_level_segment(
             heatmaps,
@@ -427,10 +521,28 @@ def main() -> None:
         "scene": args.scene,
         "result_dir": str(result_dir),
         "traj_txt": str(traj_txt),
+        "results_habitat": str(results_habitat),
+        "eval_preset": applied_preset,
         "levels": list(active_levels),
         "lang_fields": {lvl: str(lang_field_paths[lvl]) for lvl in active_levels},
         "checkpoint": str(checkpoint),
+        "langsplat_v2": True,
+        "multilevel_mode": "langsplat_eval_lerf_pyramid",
+        "aligned_train_frame": bool(args.align_gs_train_frame),
+        "text_template": str(args.text_template),
+        "class_name_replace_hyphen_with": args.class_name_replace_hyphen_with,
+        "negative_from_other_classes": bool(args.negative_from_other_classes),
+        "negative_texts": str(args.negative_texts),
+        "negative_weight": float(args.negative_weight),
+        "negative_mode": str(args.negative_mode),
+        "negative_score_mode": str(args.negative_score_mode),
+        "softmax_inv_temp": float(args.softmax_inv_temp),
         "semantic_mask_thresh": float(args.semantic_mask_thresh),
+        "semantic_mask_large_pool": int(args.semantic_mask_large_pool),
+        "semantic_mask_smooth_pool": int(args.semantic_mask_smooth_pool),
+        "heatmap_blur": float(args.heatmap_blur),
+        "localization_enabled": do_loc,
+        "text_queries": text_queries,
         "pairs_evaluated": len(rows),
         "frames_evaluated": len(frame_ids_sorted),
         "classes_discovered": class_names,
@@ -468,6 +580,108 @@ def main() -> None:
         per_pair=rows,
     )
 
+    sem_metrics: dict[str, float] | None = None
+    sem_frame_rows: list[dict[str, Any]] = []
+    if do_semsplatam:
+        sem_frame_ids = sorted(frame_score_maps.keys())
+        if int(args.semsplatam_max_frames) > 0:
+            sem_frame_ids = sem_frame_ids[: int(args.semsplatam_max_frames)]
+
+        cn_to_id = {cn: int(lfu.resolve_class_id(cn, name_to_id)) for cn in class_names}
+        pseudo_by_fid: dict[int, tuple[torch.Tensor, torch.Tensor]] | None = None
+
+        if args.pseudo_source != "none":
+            print(
+                f"[semsplatam_metrics] pseudo_source={args.pseudo_source} "
+                f"pseudo_rgb_source={args.pseudo_rgb_source} "
+                f"frames={len(sem_frame_ids)}",
+                file=sys.stderr,
+            )
+            pseudo_by_fid = {}
+            oneformer_bundle = None
+            sam_ckpt: Path | None = None
+            if args.pseudo_source == "oneformer":
+                if args.class_info_file is None:
+                    cif = _ROOT / "configs" / "Replica" / args.scene / "class_info_file.json"
+                    if not cif.is_file():
+                        cif = _ROOT / "configs" / "Replica" / "office0" / "class_info_file.json"
+                else:
+                    cif = Path(args.class_info_file).expanduser().resolve()
+                oneformer_bundle = lfu.load_oneformer_replica(
+                    device=device,
+                    class_info_file=cif,
+                    oneformer_checkpoint=args.oneformer_checkpoint,
+                    ade20k_checkpoint=args.ade20k_checkpoint,
+                )
+            elif args.pseudo_source == "sam_clip":
+                sam_ckpt = Path(args.sam_ckpt).expanduser()
+                if not sam_ckpt.is_file():
+                    sam_ckpt = (_ROOT / args.sam_ckpt).resolve()
+                if not sam_ckpt.is_file():
+                    raise FileNotFoundError(sam_ckpt)
+
+            for fid in tqdm(sem_frame_ids, desc="pseudo-labels", unit="frame", file=sys.stderr):
+                rgb_np = lfu.load_pseudo_rgb_np(
+                    frame_id=fid,
+                    source=str(args.pseudo_rgb_source),
+                    results_habitat=results_habitat,
+                    result_dir=result_dir,
+                    model=model,
+                    w2c=poses[fid],
+                    H=H,
+                    W=W,
+                    eval_stage=str(args.pseudo_eval_stage),
+                )
+                if rgb_np is None:
+                    continue
+
+                if args.pseudo_source == "oneformer":
+                    proc, of_model = oneformer_bundle
+                    pseudo, plogits = lfu.oneformer_pseudo_for_rgb(
+                        rgb_np, processor=proc, model=of_model, device=device,
+                    )
+                else:
+                    assert sam_ckpt is not None
+                    class_ids_int = [cn_to_id[cn] for cn in class_names]
+                    pseudo, plogits = lfu.sam_clip_pseudo_for_rgb(
+                        rgb_np,
+                        class_names=class_names,
+                        text_queries=text_queries,
+                        class_ids=class_ids_int,
+                        sam_ckpt=sam_ckpt,
+                        clip_model=args.clip_model,
+                        clip_pretrained=args.clip_pretrained,
+                        device=device,
+                    )
+                pseudo_by_fid[fid] = (pseudo, plogits)
+
+        sem_metrics, sem_frame_rows = lfu.compute_frame_semsplatam_metrics(
+            frame_score_maps=frame_score_maps,
+            sem_by_fid=sem_by_fid,
+            class_name_to_id=cn_to_id,
+            frame_ids=sem_frame_ids,
+            pseudo_by_fid=pseudo_by_fid,
+        )
+        summary["semsplatam_metrics"] = sem_metrics
+        summary["semsplatam_pseudo_source"] = args.pseudo_source
+        summary["semsplatam_pseudo_rgb_source"] = args.pseudo_rgb_source
+        summary["semsplatam_pseudo_eval_stage"] = (
+            str(args.pseudo_eval_stage) if args.pseudo_rgb_source == "eval_cache" else None
+        )
+        summary["semsplatam_frames"] = len(sem_frame_rows)
+        json_path.write_text(
+            json.dumps({"summary": summary, "per_pair": rows, "semsplatam_per_frame": sem_frame_rows}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        sem_txt = lfu.write_semantic_result_txt(out_dir, sem_metrics)
+        sem_csv = out_dir / "semsplatam_per_frame.csv"
+        with sem_csv.open("w", newline="", encoding="utf-8") as f:
+            headers = list(sem_frame_rows[0].keys()) if sem_frame_rows else ["frame_id", "miou_g"]
+            w = csv.DictWriter(f, fieldnames=headers)
+            w.writeheader()
+            for r in sem_frame_rows:
+                w.writerow(r)
+
     print("")
     print(f"mIoU (mean over pairs): {miou:.6f}  (n={len(miou_vals)} pairs, levels={','.join(active_levels)})")
     print(f"  precision_macro={summary['precision_macro_mean_pairs']:.4f}  "
@@ -479,6 +693,14 @@ def main() -> None:
     print(f"Saved pairs    -> {csv_path}")
     print(f"Saved mIoU txt -> {miou_txt}")
     print(f"Saved mIoU csv -> {miou_csv}")
+    if sem_metrics is not None:
+        print("")
+        print("SemSplaTAM-style frame metrics (percent):")
+        for k in ("miou_g", "miou_g_curr", "miou_p", "miou_p_curr"):
+            if k in sem_metrics:
+                print(f"  {k}: {sem_metrics[k]:.4f}")
+        print(f"Saved semantic_result.txt -> {out_dir / 'semantic_result.txt'}")
+        print(f"Saved per-frame csv     -> {out_dir / 'semsplatam_per_frame.csv'}")
 
 
 if __name__ == "__main__":
