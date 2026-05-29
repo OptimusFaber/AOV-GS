@@ -18,12 +18,13 @@
 3. [Данные Replica + Habitat](#данные-replica--habitat)
 4. [Чекпойнты SAM / CLIP](#чекпойнты-sam--clip)
 5. [Настройка путей в конфигах](#настройка-путей-в-конфигах)
-6. [Пайплайны Gaussian Splatting](#пайплайны-gaussian-splatting)
-7. [Выбор mask collector и lang mode](#выбор-mask-collector-и-lang-mode)
-8. [Инференс и отладка (новые скрипты)](#инференс-и-отладка-новые-скрипты)
-9. [Валидация mIoU на traj](#валидация-miou-на-traj)
-10. [Результаты](#результаты)
-11. [VRAM и `--render_checkpoint`](#vram-и---render_checkpoint)
+6. [Выбор GPU](#выбор-gpu)
+7. [Пайплайны Gaussian Splatting](#пайплайны-gaussian-splatting)
+8. [Выбор mask collector и lang mode](#выбор-mask-collector-и-lang-mode)
+9. [Инференс и отладка (новые скрипты)](#инференс-и-отладка-новые-скрипты)
+10. [Валидация mIoU на traj](#валидация-miou-на-traj)
+11. [Результаты](#результаты)
+12. [VRAM и `--render_checkpoint`](#vram-и---render_checkpoint)
 
 ---
 
@@ -50,6 +51,8 @@ conda activate active-sgm
 ```
 
 Скрипт ставит PyTorch 1.13.1 + CUDA 11.7, **habitat-sim** (headless), **pytorch3d**, **tiny-cuda-nn**, **diff-gaussian-rasterization-w-depth**, CCCL и прочие зависимости SplaTAM.
+
+На HPC без sudo (например **cds2**), если `tinycudann` падает с `cannot find -lcuda`, используйте `build_sem_cds2.sh` (тот же стек + фикс линковки `libcuda`) или только дочинку: `bash scripts/installation/conda_env/build_sem_cds2.sh --fix-tcnn`.
 
 ### Open-vocabulary (этап 1–3): SAM + CLIP
 
@@ -121,8 +124,123 @@ sam_ckpt_path = "ckpts/sam_vit_b_01ec64.pth"
 
 1. Откройте `configs/Replica/<scene>/habitat.py` и выставьте **`scene_id`** на ваш `mesh_semantic.ply` / stage config в дереве Replica.  
 2. Убедитесь, что `data/Replica/<scene>/` содержит нужные `results` / `results_habitat` и `traj.txt` (см. `replica.py` в датасете).  
-3. При **одной GPU** в `configs/Replica/<scene>/ActiveOpenSem.py` поставьте `sam_clip.device = "cuda:0"` (иначе падение при отсутствии `cuda:1`).  
-4. **`ActiveOpenSem.py`** добавлен для **всех** сцен Replica с `habitat.py` в этом репозитории: **`office0` … `office4`**, **`room0` … `room2`**. В каждом файле заданы `general.scene` и **`bbox_bound`**, согласованные с соответствующим `ActiveSem.py` той же сцены.
+3. **`ActiveOpenSem.py`** добавлен для **всех** сцен Replica с `habitat.py` в этом репозитории: **`office0` … `office4`**, **`room0` … `room2`**. В каждом файле заданы `general.scene` и **`bbox_bound`**, согласованные с соответствующим `ActiveSem.py` той же сцены.
+4. Если RGB-кадры из `generate_replica_nvs.sh` выглядят «пересвеченными»/сильно искаженными, проверьте `data/replica_v1/<scene>/habitat/replicaSDK_stage.stage_config.json`:  
+   - `render_asset` должен указывать на **текстурный меш** `../mesh.ply`;  
+   - `semantic_asset` должен указывать на `mesh_semantic.ply`.  
+   Типичный симптом в логе при ошибке: `with render asset : .../mesh_semantic.ply`. В этом случае симулятор рендерит semantic mesh как RGB.
+
+Выбор GPU — в [следующем разделе](#выбор-gpu).
+
+---
+
+## Выбор GPU
+
+**По умолчанию всё на `cuda:0`.** Можно держать SLAM и сегментатор на одной карте или разнести по двум.
+
+### Сводка: что где задаётся
+
+| Компонент | Параметр | Файл / способ | Default |
+|-----------|----------|---------------|---------|
+| **SLAM** (SplaTAM / SemSplaTAM) | `primary_device` | `configs/Replica/replica_splatam_s.py` или `slam.override` | `cuda:0` |
+| **OneFormer** (ActiveSem) | `semantic_device` | `configs/Replica/<scene>/ActiveSem.py` | `cuda:0` |
+| **SAM + CLIP** (ActiveOpenSem / Hybrid) | `sam_clip.device` | `configs/Replica/<scene>/ActiveOpenSem.py` | `cuda:0` |
+| **Language field** (offline train) | `DEVICE` (5-й аргумент) | `03_train_gaussian_lang_field_v2.sh` | `cuda:0` |
+| **Traj mIoU (lang field)** | `--device` | `validate_lang_field_traj.py` | `cuda:0` |
+| **Traj mIoU_p (SAM+CLIP pseudo)** | `--device` | `compute_miou_p_traj.py` | `cuda:0` |
+| **Инференс / рендер / query** | `--device` | `query_language_field.py`, `render_*_from_pose.py`, … | `cuda:0` |
+| **Ablation / pipeline** | `GPU` | `CUDA_VISIBLE_DEVICES` в shell | `0` |
+
+### Одна GPU (рекомендуется для отладки)
+
+```bash
+GPU=0 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
+```
+
+В конфигах по умолчанию: `primary_device=cuda:0`, `sam_clip.device=cuda:0`, `semantic_device=cuda:0`.
+
+### Две GPU: SLAM + сегментатор раздельно
+
+```bash
+GPU=0,1 \
+SLAM_DEVICE=cuda:0 \
+SEM_DEVICE=cuda:1 \
+bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
+```
+
+| Алгоритм | SLAM | Сегментатор | Ключ в конфиге |
+|----------|------|-------------|----------------|
+| **ActiveSem** | `cuda:0` | OneFormer → `cuda:1` | `semantic_device` |
+| **ActiveOpenSem / Hybrid** | `cuda:0` | SAM+CLIP → `cuda:1` | `sam_clip.device` |
+
+Override **без правки конфига** (CLI или env):
+
+```bash
+python src/main/activesgm.py \
+  --cfg configs/Replica/office0/ActiveOpenSem.py \
+  --slam_device cuda:0 \
+  --seg_device cuda:1 \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0
+```
+
+Эквивалент через env: `ACTIVESGM_SLAM_DEVICE`, `ACTIVESGM_SEM_DEVICE`.
+
+### Language field на другой GPU
+
+Rasterizer (`diff_gaussian_rasterization`) работает только как **logical `cuda:0`**. Для физической GPU 1 передайте `cuda:1` — скрипт сам сделает remapping:
+
+```bash
+bash scripts/aov-gs/03_train_gaussian_lang_field_v2.sh \
+  results/Replica/office0/ActiveOpenSem/run_0 \
+  64 m 12000 cuda:1 1 4 auto 1.0
+# → CUDA_VISIBLE_DEVICES=1, в Python --device cuda:0
+```
+
+Или явно:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 bash scripts/aov-gs/03_train_gaussian_lang_field_v2.sh ... cuda:0 ...
+```
+
+**Не запускайте** `python scripts/train_language_field.py --device cuda:1` напрямую без `CUDA_VISIBLE_DEVICES`.
+
+### `--device` в Python-скриптах
+
+Все GPU-скрипты в `scripts/` принимают **`--device`** (по умолчанию `cuda:0`). Полный список:
+
+| Скрипт | `--device` |
+|--------|------------|
+| `validate_lang_field_traj.py` | traj mIoU (LangSplatV2) |
+| `compute_miou_p_traj.py` | mIoU_p (SAM+CLIP pseudo, без lang field) |
+| `train_language_field.py` | обучение lang field (см. remapping выше) |
+| `query_language_field.py` | open-vocab query / heatmap |
+| `render_view_from_pose.py`, `render_query_from_pose.py` | один кадр |
+| `render_keyframe_poses.py`, `pose_visibility_from_traj.py` | poses / visibility |
+| `train_language_autoencoder.py`, `eval_language_autoencoder.py` | AE |
+| `eval_lang_field_segmentation.py` | legacy (один level) |
+| `eval_clip_sam_miou.py`, `sam_query_match.py`, `demo_sam_clip_text_query.py` | 2D SAM+CLIP |
+| `aov-gs/eval_run_lang_fields.py`, `eval_run_autoencoders.py` | batch eval |
+
+Пример — валидация на физической GPU 1:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/validate_lang_field_traj.py \
+  --scene office0 \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
+  --traj_txt data/replica_sim_nvs/office0/traj.txt \
+  --device cuda:0
+```
+
+Или без remapping: `--device cuda:1` (для скриптов **без** rasterizer remapping — валидация, query, SAM+CLIP).
+
+`run_nvs_validation.py` и `eval_semsplatam_per_class_miou.py` берут GPU из **`primary_device`** / **`semantic_device`** в конфиге (или `CUDA_VISIBLE_DEVICES`).
+
+### Ablation
+
+```bash
+GPU=0      bash scripts/ablation/run_activesgm_benchmark.sh
+GPU=0,1    SLAM_DEVICE=cuda:0 SEM_DEVICE=cuda:1 bash scripts/ablation/run_scene_lang_pipeline.sh office0
+```
 
 ---
 
@@ -156,6 +274,8 @@ bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 sam langsplat run_ls
 ### Этап 1 — аргументы `01_slam_exploration.sh`
 
 `[SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]`
+
+**GPU (env):** `GPU` (default `0`), `SLAM_DEVICE`, `SEM_DEVICE` — см. [Выбор GPU](#выбор-gpu).
 
 | `MASK_COLLECTOR` | CLI | Поведение |
 |------------------|-----|-----------|
@@ -291,8 +411,9 @@ python scripts/train_language_field.py \
 |--------|------------|
 | `render_view_from_pose.py` | RGB из одной позы `traj.txt` |
 | `render_query_from_pose.py` | RGB \| heatmap \| sem mask по текстовому запросу (один PNG) |
-| `validate_lang_field_traj.py` | mIoU по всей traj + Habitat GT; пирамида s/m/l |
-| `lang_field_eval_utils.py` | Общие утилиты (poses, levels, mIoU writer) |
+| `validate_lang_field_traj.py` | **Основная** traj mIoU для LangSplatV2 (pair mIoU, s/m/l, tqdm) |
+| `compute_miou_p_traj.py` | mIoU_p: SAM+CLIP pseudo на rendered RGB (без lang field) |
+| `lang_field_eval_utils.py` | Общие утилиты (poses, levels, mIoU writer, semsplatam metrics) |
 | `lang_pipeline_utils.py` | Парсинг `mask_collector` / `lang_mode` |
 | `run_nvs_validation.py` | NVS метрики (PSNR, SSIM, LPIPS) |
 | `visualize_language_seg_maps.py` | Визуализация `*_s.npy` при обучении |
@@ -340,25 +461,62 @@ python scripts/query_language_field.py \
 
 ## Валидация mIoU на traj
 
+### Основной скрипт: `validate_lang_field_traj.py`
+
+Для **CLIP + SAM + LangSplatV2** — pair mIoU по всей traj (кадр × класс), пирамида s/m/l, прогресс в терминале (tqdm; нужен `pip install tqdm`).
+
+По умолчанию включён пресет **`val_results_sml_levels`** (s/m/l, thresh 0.55, `align_gs_train_frame`). Отключить: `--eval_preset none`.
+
 ```bash
 python scripts/validate_lang_field_traj.py \
   --scene office0 \
   --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
   --traj_txt data/replica_sim_nvs/office0/traj.txt \
-  --align_gs_train_frame \
-  --levels all \
-  --semantic_mask_thresh 0.50 \
-  --out_dir val-results/office0_sml
+  --device cuda:0 \
+  --out_dir results/Replica/office0/ActiveOpenSem/run_0/lang_field_traj_eval
+```
+
+В stderr появится progress bar:
+
+```
+[lang-field-traj] pairs=274 frames=24 classes=23 ...
+lang-field-traj:  45%|████▌     | 123/274 [02:15<02:45, 1.09pair/s]
 ```
 
 | Флаг | Описание |
 |------|----------|
+| `--device` | GPU для рендера и CLIP (default `cuda:0`) |
+| `--eval_preset` | `val_results_sml_levels` (default) или `none` |
 | `--levels` | `all` или подмножество: `s`, `m`, `l`, `s,m` |
-| `--semantic_mask_thresh` | Порог бинаризации heatmap (LangSplatV2 eval) |
+| `--semantic_mask_thresh` | Порог бинаризации heatmap (default 0.55 с пресетом) |
+| `--semsplatam_metrics` | Дополнительно: frame mIoU (`miou_g`, `miou_p`, …) → `semantic_result.txt` |
 | `--class_name_replace_hyphen_with " "` | Запросы без дефисов (`desk organizer`) |
 | `--negative_from_other_classes` | Негативы = остальные классы сцены |
 
-**Выход:** печатает **mIoU в stdout**; сохраняет `metrics.json`, `pairs.csv`, `miou_summary.txt`, `miou_per_class.csv`.
+**Выход:** mIoU в stdout; `metrics.json`, `pairs.csv`, `miou_summary.txt`, `miou_per_class.csv`.
+
+### Дополнительно: `compute_miou_p_traj.py`
+
+Только **mIoU_p** — SAM+CLIP pseudo-labels на **отрендеренном RGB** SplaTAM (без language field). Не заменяет `validate_lang_field_traj.py`.
+
+```bash
+python scripts/compute_miou_p_traj.py \
+  --scene office0 \
+  --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
+  --traj_txt data/replica_sim_nvs/office0/traj.txt \
+  --device cuda:0 \
+  --out_dir results/Replica/office0/ActiveOpenSem/run_0/miou_p_traj_eval
+```
+
+Прогресс: `miou_p: 60%|██████ | 14/24 [01:02<00:41, 4.2frame/s]`.
+
+### Что **не** использовать для traj LangSplatV2
+
+| Скрипт | Почему |
+|--------|--------|
+| `eval_lang_field_segmentation.py` | устаревший, один level |
+| `eval_clip_sam_miou.py` | 2D baseline без 3DGS |
+| `eval_run_lang_fields.py` | несколько текстовых запросов, не полный бенч |
 
 ---
 
@@ -406,7 +564,9 @@ bash scripts/aov-gs/run_query_lang_fields_office0.sh \
 
 - **`scripts/data/`** — загрузка и генерация Replica / MP3D.  
 - **`scripts/evaluation/`** — оценки 3D / семантики / NVS.  
-- **`scripts/aov-gs/`** — шаги 01–03, гриды, **`pipeline_gs_open_vocab.sh`**.  
+- **`scripts/aov-gs/`** — шаги 01–03, гриды, **`pipeline_gs_open_vocab.sh`**, **`_gpu_helpers.sh`**.  
+- **`scripts/ablation/`** — бенчмарки ActiveSem / Hybrid, `run_scene_lang_pipeline.sh`.  
+- **`compute_miou_p_traj.py`** — mIoU_p (SAM+CLIP pseudo на rendered RGB).  
 - **`eval_lang_field_segmentation.py`** — старая оценка (один level); для traj используйте **`validate_lang_field_traj.py`**.  
 - **`eval_clip_sam_miou.py`** — baseline 2D SAM+CLIP без 3DGS.
 
