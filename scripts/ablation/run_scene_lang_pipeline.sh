@@ -7,7 +7,7 @@
 #
 # Examples:
 #   bash scripts/ablation/run_scene_lang_pipeline.sh office0
-#   bash scripts/ablation/run_scene_lang_pipeline.sh office0 ActiveOpenSemHybrid
+#   bash scripts/ablation/run_scene_lang_pipeline.sh office0 ActiveOpenSem
 #   TRAIN_DOWNSCALE=0.25 LEVELS=s bash scripts/ablation/run_scene_lang_pipeline.sh room0
 #
 # Env:
@@ -15,7 +15,7 @@
 #   CODEBOOK_K=64         LangSplatV2 codebook size
 #   LEVELS=all            SAM levels: s, m, l, or all (default s)
 #   NUM_ITERS=30000
-#   HYBRID_K=8            only for ActiveOpenSemHybrid
+#   HYBRID_K=8            only for ActiveOpenSem
 #   PARALLEL_LANG=auto    auto|0|1 — parallelize s/m/l on free GPUs
 #   SEED=0
 #   GPU=0,1
@@ -47,7 +47,7 @@ LEVELS="${LEVELS:-s}"
 PARALLEL_LANG="${PARALLEL_LANG:-auto}"
 HYBRID_K="${HYBRID_K:-8}"
 
-if [[ "$EXP" == "ActiveOpenSemHybrid" ]]; then
+if [[ "$EXP" == "ActiveOpenSem" ]]; then
   python3 scripts/ablation/gen_open_sem_scene_configs.py
   python3 <<PY
 import sys

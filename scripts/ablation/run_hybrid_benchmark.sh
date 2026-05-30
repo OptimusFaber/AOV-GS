@@ -1,6 +1,6 @@
 #!/bin/bash
 ##################################################
-# Hybrid (ActiveOpenSemHybrid) benchmark on Replica.
+# ActiveOpenSem (hybrid v3 + CorrCLIP) benchmark on Replica.
 #
 # Usage:
 #   bash scripts/ablation/run_hybrid_benchmark.sh [SCENES...]
@@ -14,7 +14,7 @@
 #   GPU=0,1
 #
 # Output:
-#   results/Replica/<scene>/ActiveOpenSemHybrid/run_N/
+#   results/Replica/<scene>/ActiveOpenSem/run_N/
 #   results/Replica/table_hybrid.csv
 ##################################################
 
@@ -27,7 +27,7 @@ export CUDA_VISIBLE_DEVICES="${GPU:-0}"
 SEED="${SEED:-0}"
 ENABLE_VIS="${ENABLE_VIS:-0}"
 HYBRID_K="${HYBRID_K:-8}"
-EXP="ActiveOpenSemHybrid"
+EXP="ActiveOpenSem"
 
 ALL_SCENES=(office0 office1 office2 office3 office4 room0 room1 room2)
 

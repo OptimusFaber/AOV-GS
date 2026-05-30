@@ -329,7 +329,7 @@ def available_gpus(min_free_mb: int = 4000) -> list[str]:
 
 
 def patch_hybrid_k(scene: str, k: int, root: Path | None = None) -> Path:
-    cfg_path = (root or ROOT) / "configs" / "Replica" / scene / "ActiveOpenSemHybrid.py"
+    cfg_path = (root or ROOT) / "configs" / "Replica" / scene / "ActiveOpenSem.py"
     text = cfg_path.read_text(encoding="utf-8")
     new_text, n = re.subn(
         r"max_semantic_candidates\s*=\s*\d+",

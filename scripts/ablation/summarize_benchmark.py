@@ -22,7 +22,7 @@ OUT = ROOT / "results" / "Replica"
 ALGORITHMS = {
     "activesgm": ("ActiveSem", "table_activesgm"),
     "activegeom": ("ActiveGeom", "table_activegeom"),
-    "hybrid": ("ActiveOpenSemHybrid", "table_hybrid"),
+    "hybrid": ("ActiveOpenSem", "table_hybrid"),
 }
 
 CSV_FIELDS = [
