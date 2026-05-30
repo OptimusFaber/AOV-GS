@@ -1266,16 +1266,27 @@ class ActiveGSPlannerv2(NarutoPlanner):
                 for i, cand_pose in enumerate(cand_poses):
                     ### render data from candidate pose ###
                     img, depth, valid_mask, seen = gs_slam.render(cand_pose)
-                    _, logits = gs_slam.render_semantic(cand_pose, seen)
-                    # valid_entropy_mask = valid_mask[0].clone()
+                    try:
+                        if gs_slam.device.type == "cuda":
+                            torch.cuda.synchronize()
+                        _, logits = gs_slam.render_semantic(cand_pose, seen)
+                        if gs_slam.device.type == "cuda":
+                            torch.cuda.synchronize()
+                        topk_k = min(int(getattr(gs_slam, "topk", 16)), logits.shape[0])
+                        topk_prob, _ = torch.topk(logits, topk_k, dim=0)
+                        entropy = calc_shannon_entropy(topk_prob, dim=0).mean()
+                    except RuntimeError:
+                        seg_img = img.permute(1, 2, 0).clamp(0, 1)
+                        _, pseudo_logits = gs_slam.semantic_annotation(seg_img)
+                        entropy = calc_shannon_entropy(
+                            pseudo_logits.to(gs_slam.device), dim=-1
+                        ).mean()
 
                     ##################################################
                     ### Ignore Simulation environement incomplete region
-                    # FIXME: this simulation is time consuming.
-                    # However, it is not related to our method but the imperfect simulation data.
                     ##################################################
                     depth_gt = self.sim.simulate(self.pose_conversion_slam2sim(cand_pose).detach().cpu().numpy(), no_print=True)['depth']
-                    valid_sim_mask = depth_gt > 0.2 # 0.0 / 0.2 is the value that ignore rendering
+                    valid_sim_mask = depth_gt > 0.2
                     valid_mask[0][~valid_sim_mask] = True
 
                     _, self.img_h, self.img_w = img.shape
@@ -1283,10 +1294,6 @@ class ActiveGSPlannerv2(NarutoPlanner):
                     ### compute EXPLORE I.G. ###
                     explore_ig = (valid_mask==0).sum()
                     explore_igs.append(explore_ig)
-
-                    ### semantic information
-                    topk_prob, _ = torch.topk(logits, 16, dim=0)
-                    entropy = calc_shannon_entropy(topk_prob, dim=0).mean()
                     seman_entropies.append(entropy)
 
                 ### compute weighted exploration I.G., weighted by distance ###
@@ -1422,7 +1429,7 @@ class ActiveGSPlannerv2(NarutoPlanner):
                     color_ig = calc_psnr(color*valid_depth_mask, cand_data[i]['color']*valid_depth_mask).mean()
                     color_igs.append(color_ig)
 
-                    topk_probs, _ = torch.topk(pred_logits, k=16,dim=0)
+                    topk_probs, _ = torch.topk(pred_logits, k=min(int(getattr(gs_slam, "topk", 16)), pred_logits.shape[0]), dim=0)
                     recognize_mask = topk_probs.sum(0)>0.5
                     seman_ig = (recognize_mask & valid_depth_mask).sum()/valid_depth_mask.sum()
 

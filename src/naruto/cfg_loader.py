@@ -26,9 +26,32 @@ SOFTWARE.
 import argparse
 import json
 import os
+import re
 import types
 
 import mmengine
+
+
+def resolve_next_run_dir(result_dir: str) -> str:
+    """Allocate ``run_{n+1}`` when ``run_*`` folders already exist under the experiment root."""
+    result_dir = os.path.normpath(result_dir)
+    base = os.path.basename(result_dir)
+    if re.fullmatch(r"run_\d+", base):
+        experiment_root = os.path.dirname(result_dir)
+    else:
+        experiment_root = result_dir
+
+    if not os.path.isdir(experiment_root):
+        return os.path.join(experiment_root, "run_0")
+
+    run_ids = []
+    for name in os.listdir(experiment_root):
+        match = re.fullmatch(r"run_(\d+)", name)
+        if match and os.path.isdir(os.path.join(experiment_root, name)):
+            run_ids.append(int(match.group(1)))
+
+    next_id = (max(run_ids) + 1) if run_ids else 0
+    return os.path.join(experiment_root, f"run_{next_id}")
 
 def override_cfg(
         args: argparse.Namespace,
@@ -68,25 +91,10 @@ def override_cfg(
         if cfg.sam_clip is None:
             pass
         elif int(args.corrclip) == 0:
+            # SAM+CLIP: disable CorrCLIP-style merge + inter-class suppression (see sam_clip_extractor).
             cfg.sam_clip.corrclip_mask_merge = False
             cfg.sam_clip.corrclip_interclass_suppress_alpha = 0.0
-        # corrclip == 1 → keep values from the config file.
-
-    slam_dev = getattr(args, "slam_device", None) or os.environ.get("ACTIVESGM_SLAM_DEVICE")
-    seg_dev = getattr(args, "seg_device", None) or os.environ.get("ACTIVESGM_SEM_DEVICE")
-
-    if slam_dev:
-        if not hasattr(cfg.slam, "override") or cfg.slam.override is None:
-            cfg.slam.override = mmengine.Config(dict())
-        cfg.slam.override["primary_device"] = slam_dev
-
-    if seg_dev:
-        if hasattr(cfg.slam, "semantic_device"):
-            cfg.slam.semantic_device = seg_dev
-        if hasattr(cfg, "sam_clip") and cfg.sam_clip is not None:
-            cfg.sam_clip.device = seg_dev
-        if hasattr(cfg, "clip") and cfg.clip is not None:
-            cfg.clip.device = seg_dev
+        # corrclip == 1 → keep values from the config file (explicit “use cfg”).
 
     return cfg
 
@@ -117,23 +125,9 @@ def argument_parsing() -> argparse.Namespace:
         type=int,
         default=None,
         choices=[0, 1],
-        help="SAM+CLIP CorrCLIP-style post-processing. "
-             "0: plain SAM masks (no merge/suppression). "
-             "1 or omit: use [sam_clip] config (CorrCLIP on if enabled there).",
-    )
-    parser.add_argument(
-        "--slam_device",
-        type=str,
-        default=None,
-        help="Override SLAM GPU (primary_device in replica_splatam_s.py), e.g. cuda:0. "
-             "Env: ACTIVESGM_SLAM_DEVICE.",
-    )
-    parser.add_argument(
-        "--seg_device",
-        type=str,
-        default=None,
-        help="Override segmenter GPU: semantic_device (OneFormer / ActiveSem) or "
-             "sam_clip.device (SAM+CLIP / ActiveOpenSem). Env: ACTIVESGM_SEM_DEVICE.",
+        help="SAM+CLIP CorrCLIP-style post-processing in [sam_clip]. "
+             "0: disable mask merge and inter-class suppression. "
+             "1 or omit: use the config file as written.",
     )
     parser.add_argument("--stage", type=str, default='final',
                         help="ONLY for SplaTAM result evaluation ")
@@ -222,6 +216,16 @@ def load_cfg(args: argparse.Namespace) -> mmengine.Config:
     """
     cfg = mmengine.Config.fromfile(args.cfg)
 
+    # If result_dir is the generic default, derive from config file name
+    # (e.g. configs/.../ActiveOpenSem.py → results/Replica/office0/ActiveOpenSem/run_0).
+    if getattr(args, "result_dir", None) is None and hasattr(cfg, "dirs"):
+        rd = cfg.dirs.get("result_dir", "results/")
+        if rd in ("results/", "results", os.path.join("results", "")):
+            exp_name = os.path.splitext(os.path.basename(args.cfg))[0]
+            dataset = cfg.general.get("dataset", "Replica") if hasattr(cfg, "general") else "Replica"
+            scene = cfg.general.get("scene", "office0") if hasattr(cfg, "general") else "office0"
+            cfg.dirs.result_dir = os.path.join("results", dataset, scene, exp_name)
+
     # Optional scene override: keep derived dirs in sync.
     if hasattr(args, "scene") and args.scene:
         # Update general.scene
@@ -239,4 +243,10 @@ def load_cfg(args: argparse.Namespace) -> mmengine.Config:
             cfg.planner.SLAMData_dir = os.path.join(cfg.dirs.data_dir, dataset, args.scene)
 
     cfg = override_cfg(args, cfg)
+
+    if hasattr(cfg, "dirs") and cfg.dirs.get("result_dir"):
+        # Only auto-allocate run_{n+1} for new training runs; keep explicit --result_dir.
+        if getattr(args, "result_dir", None) is None:
+            cfg.dirs.result_dir = resolve_next_run_dir(cfg.dirs.result_dir)
+
     return cfg

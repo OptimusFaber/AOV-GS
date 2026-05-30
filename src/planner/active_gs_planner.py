@@ -107,6 +107,7 @@ class ActiveGSPlanner(NarutoPlanner):
         self.exploration_stage = 0
         self.num_exploration_stage = self.planner_cfg.num_exploration_stage
         self.first_done_exploration = False
+        self.post_refine_counter = 0
 
         ### initialize view direction sampling ###
         self.num_dir_samples = self.planner_cfg.num_dir_samples
@@ -118,6 +119,60 @@ class ActiveGSPlanner(NarutoPlanner):
                 self.num_dir_samples[i],
             )) # 1, K, 4, 4
             self.view_rot_idx.append(torch.range(0, self.num_dir_samples[i]-1).unsqueeze(0).unsqueeze(2).to(self.device))
+
+    def use_semantic_exploration(self) -> bool:
+        """Override in hybrid planner to mix geometry with SAM+CLIP novelty."""
+        return False
+
+    def score_exploration_semantics(
+        self,
+        cand_poses: torch.Tensor,
+        gs_slam,
+        geo_weights: torch.Tensor = None,
+    ):
+        """Optional per-candidate semantic weights [N]. None = geometry only."""
+        return None
+
+    def maybe_log_semantic_exploration_pick(
+        self,
+        geo_best_idx: int,
+        final_best_idx: int,
+        semantic_active: bool,
+    ) -> None:
+        """Override in hybrid planner to announce semantic-driven NBV."""
+        pass
+
+    def select_exploration_pose(
+        self,
+        cand_poses: torch.Tensor,
+        explore_igs_sm: torch.Tensor,
+        dists_sm: torch.Tensor,
+        gs_slam,
+    ) -> torch.Tensor:
+        """Pick next exploration pose (geometry × optional semantic weights)."""
+        geo_weights = (1 - dists_sm) * explore_igs_sm
+        geo_best_idx = int(torch.argmax(geo_weights).item())
+
+        sem_weights = self.score_exploration_semantics(
+            cand_poses, gs_slam, geo_weights=geo_weights
+        )
+        semantic_active = sem_weights is not None
+        if semantic_active:
+            final_weights = geo_weights * sem_weights.to(geo_weights.device)
+            sem_weights = sem_weights.to(geo_weights.device)
+            self.info_printer(
+                f"                            Semantic Novelty : {sem_weights}",
+                self.step,
+                self.__class__.__name__,
+            )
+        else:
+            final_weights = geo_weights
+
+        final_best_idx = int(torch.argmax(final_weights).item())
+        self.maybe_log_semantic_exploration_pick(
+            geo_best_idx, final_best_idx, semantic_active
+        )
+        return cand_poses[final_best_idx]
 
     def generate_circular_trajectory(self, radius: float, delta: float, steps: int) -> torch.Tensor:
         """
@@ -1145,6 +1200,7 @@ class ActiveGSPlanner(NarutoPlanner):
                     self.info_printer(f"Current state: {self.state} | {self.planning_state}: Done All Exploration.", self.step, self.__class__.__name__)
                     if self.main_cfg.slam.use_global_keyframe:
                         self.planning_state = "post_refinement"
+                        self.post_refine_counter = 0
                     else:
                         self.planning_state = "done"
                 else:
@@ -1193,8 +1249,9 @@ class ActiveGSPlanner(NarutoPlanner):
                 ### compute weighted exploration I.G., weighted by distance ###
                 explore_igs = torch.stack(explore_igs).float()
                 explore_igs_sm = torch.nn.functional.softmax(torch.log(explore_igs), dim=0)
-                weighted_explore_igs = (1 - dists_sm) * explore_igs_sm
-                new_pose = cand_poses[torch.argmax(weighted_explore_igs)]
+                new_pose = self.select_exploration_pose(
+                    cand_poses, explore_igs_sm, dists_sm, gs_slam
+                )
                 # print("Best pose px num: ", explore_igs[torch.argmax(weighted_explore_igs)])
 
                 ### update explore pool ###
@@ -1269,11 +1326,22 @@ class ActiveGSPlanner(NarutoPlanner):
 
             if len(self.refine_pool) == 0:
                 self.planning_state = "post_refinement"
+                self.post_refine_counter = 0
 
         ##################################################
         ### Post-Refinement
         ##################################################
         if self.planning_state == "post_refinement":
+            self.post_refine_counter += 1
+            if self.post_refine_counter >= self.planner_cfg.post_refine_steps:
+                self.planning_state = "done"
+                self.info_printer(
+                    f"Post-refinement budget reached "
+                    f"({self.planner_cfg.post_refine_steps} steps).",
+                    self.step,
+                    self.__class__.__name__,
+                )
+
             if self.step % self.planner_cfg.post_refinement_eval_freq == 0:
                 self.info_printer(f"Current state: {self.state} | {self.planning_state}: Evaluate Post-Refinement Candidate I.G.", self.step, self.__class__.__name__)
                 self.planning_state = "post_refinement"

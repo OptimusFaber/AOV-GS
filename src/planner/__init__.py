@@ -88,10 +88,22 @@ def init_planner(main_cfg: mmengine.Config, info_printer: InfoPrinter):
             main_cfg,
             info_printer,
         )
+    elif main_cfg.planner.method == "active_gs_hybrid_v3":
+        info_printer(
+            "Initialize ActiveOpenSem planner (active_gs_hybrid_v3: SAM+CLIP + capped post-refinement)...",
+            0,
+            "ActiveGSHybridPlannerv3",
+        )
+        from src.planner.active_gs_planner_hybrid_v3 import ActiveGSHybridPlannerv3
+        planner = ActiveGSHybridPlannerv3(
+            main_cfg,
+            info_printer,
+        )
 
     else:
         assert False, (
             "Planner choices: [naruto, predefined_traj, active_lang, active_gs, "
-            f"active_gsv2, active_gs_hybrid]. Current option: [{main_cfg.planner.method}]"
+            f"active_gsv2, active_gs_hybrid, active_gs_hybrid_v3]. "
+            f"Current option: [{main_cfg.planner.method}]"
         )
     return planner

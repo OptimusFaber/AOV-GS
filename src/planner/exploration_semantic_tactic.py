@@ -55,6 +55,27 @@ def load_keyframe_mask_embeddings(
     return _l2_normalize_rows(feats)
 
 
+def mask_embedding_coverage(
+    rendered_feats: np.ndarray,
+    reference_feats: np.ndarray,
+) -> float:
+    """
+    Насколько рендер покрывает эталонные CLIP-эмбеддинги масок keyframe.
+
+    Для каждой reference-маски: max_k cos(ref_k, rendered). Итог — mean.
+    Значение в [0, 1]; выше — лучше семантическое совпадение.
+    """
+    if reference_feats.shape[0] == 0:
+        return 0.0
+    if rendered_feats.shape[0] == 0:
+        return 0.0
+
+    ref = _l2_normalize_rows(reference_feats)
+    rend = _l2_normalize_rows(rendered_feats)
+    sims = ref @ rend.T
+    return float(sims.max(axis=1).mean())
+
+
 def mask_embedding_novelty(
     candidate_feats: np.ndarray,
     bank_feats: np.ndarray,
@@ -169,6 +190,37 @@ def _embed_masks_standalone(
     return np.concatenate(all_embs, axis=0) if all_embs else np.zeros((0, 512), dtype=np.float32)
 
 
+def corrclip_kwargs_from_config(sam_cfg) -> dict:
+    """Read CorrCLIP post-processing flags from ``main_cfg.sam_clip`` (or dict)."""
+    if sam_cfg is None:
+        return dict(
+            corrclip_mask_merge=False,
+            corrclip_merge_sim_thresh=0.86,
+            corrclip_merge_dist_px=80.0,
+            corrclip_interclass_suppress_alpha=0.0,
+            corrclip_interclass_sim_thresh=0.78,
+            corrclip_interclass_sigma_px=120.0,
+        )
+
+    def _get(key: str, default):
+        if isinstance(sam_cfg, dict):
+            return sam_cfg.get(key, default)
+        return getattr(sam_cfg, key, default)
+
+    return dict(
+        corrclip_mask_merge=bool(_get("corrclip_mask_merge", True)),
+        corrclip_merge_sim_thresh=float(_get("corrclip_merge_sim_thresh", 0.86)),
+        corrclip_merge_dist_px=float(_get("corrclip_merge_dist_px", 80.0)),
+        corrclip_interclass_suppress_alpha=float(
+            _get("corrclip_interclass_suppress_alpha", 0.15)
+        ),
+        corrclip_interclass_sim_thresh=float(
+            _get("corrclip_interclass_sim_thresh", 0.78)
+        ),
+        corrclip_interclass_sigma_px=float(_get("corrclip_interclass_sigma_px", 120.0)),
+    )
+
+
 class PlanningSAMCLIPEncoder:
     """
     Синхронный SAM+CLIP для оценки кандидатных видов в планировщике.
@@ -181,10 +233,16 @@ class PlanningSAMCLIPEncoder:
         sam_ckpt_path: str,
         clip_model: str = "ViT-B-16",
         clip_pretrained: str = "laion2b_s34b_b88k",
-        device: str = "cuda:0",
+        device: str = "cuda:1",
         max_masks_per_frame: int = 40,
         clip_batch_size: int = 16,
         bbox_pad_px: int = 0,
+        corrclip_mask_merge: bool = True,
+        corrclip_merge_sim_thresh: float = 0.86,
+        corrclip_merge_dist_px: float = 80.0,
+        corrclip_interclass_suppress_alpha: float = 0.15,
+        corrclip_interclass_sim_thresh: float = 0.78,
+        corrclip_interclass_sigma_px: float = 120.0,
     ) -> None:
         self.sam_ckpt_path = sam_ckpt_path
         self.clip_model_name = clip_model
@@ -193,6 +251,14 @@ class PlanningSAMCLIPEncoder:
         self.max_masks_per_frame = max_masks_per_frame
         self.clip_batch_size = clip_batch_size
         self.bbox_pad_px = bbox_pad_px
+        self.corrclip_mask_merge = bool(corrclip_mask_merge)
+        self.corrclip_merge_sim_thresh = float(corrclip_merge_sim_thresh)
+        self.corrclip_merge_dist_px = float(corrclip_merge_dist_px)
+        self.corrclip_interclass_suppress_alpha = float(
+            corrclip_interclass_suppress_alpha
+        )
+        self.corrclip_interclass_sim_thresh = float(corrclip_interclass_sim_thresh)
+        self.corrclip_interclass_sigma_px = float(corrclip_interclass_sigma_px)
         self._mask_generator = None
         self._clip_model = None
         self._clip_process = None
@@ -261,12 +327,45 @@ class PlanningSAMCLIPEncoder:
                 std=[0.26862954, 0.26130258, 0.27577711],
             ),
         ])
+        corrclip_on = self.corrclip_mask_merge or self.corrclip_interclass_suppress_alpha > 0.0
         logger.info(
-            "PlanningSAMCLIPEncoder ready (SAM %s, CLIP %s on %s).",
+            "PlanningSAMCLIPEncoder ready (SAM %s, CLIP %s on %s, CorrCLIP=%s).",
             model_type,
             self.clip_model_name,
             self.device,
+            corrclip_on,
         )
+
+    def _apply_corrclip_postprocess(
+        self,
+        masks: list,
+        embs: np.ndarray,
+    ) -> tuple[list, np.ndarray]:
+        """Same CorrCLIP merge/suppress as background SAMCLIPExtractor."""
+        from src.semantic.sam_clip_extractor import (
+            _merge_masks_corrclip_style,
+            _suppress_interclass_corrclip_style,
+        )
+
+        if embs.shape[0] == 0 or not masks:
+            return masks, embs
+
+        if self.corrclip_mask_merge:
+            masks, embs = _merge_masks_corrclip_style(
+                masks,
+                embs,
+                sim_thresh=self.corrclip_merge_sim_thresh,
+                max_dist_px=self.corrclip_merge_dist_px,
+            )
+        if self.corrclip_interclass_suppress_alpha > 0.0 and embs.shape[0] > 0:
+            embs = _suppress_interclass_corrclip_style(
+                embs,
+                masks,
+                alpha=self.corrclip_interclass_suppress_alpha,
+                sim_thresh=self.corrclip_interclass_sim_thresh,
+                sigma_px=self.corrclip_interclass_sigma_px,
+            )
+        return masks, embs.astype(np.float32)
 
     @torch.no_grad()
     def encode_rgb(self, image_rgb: np.ndarray) -> np.ndarray:
@@ -303,9 +402,10 @@ class PlanningSAMCLIPEncoder:
             clip_batch_size=self.clip_batch_size,
             bbox_pad_px=self.bbox_pad_px,
         )
+        masks_all, embs = self._apply_corrclip_postprocess(masks_all, embs)
         if self.device.startswith("cuda"):
             torch.cuda.empty_cache()
-        return embs.astype(np.float32)
+        return _l2_normalize_rows(embs.astype(np.float32))
 
 
 class HybridSemanticExplorationScorer:
@@ -321,10 +421,11 @@ class HybridSemanticExplorationScorer:
         sam_ckpt_path: str,
         clip_model: str = "ViT-B-16",
         clip_pretrained: str = "laion2b_s34b_b88k",
-        device: str = "cuda:0",
+        device: str = "cuda:1",
         max_masks_per_candidate: int = 40,
         novelty_aggregation: str = "mean",
         min_bank_masks: int = 8,
+        **corrclip_kwargs,
     ) -> None:
         self.bank = KeyframeMaskEmbeddingBank(lang_feat_dir)
         self.encoder = PlanningSAMCLIPEncoder(
@@ -333,6 +434,7 @@ class HybridSemanticExplorationScorer:
             clip_pretrained=clip_pretrained,
             device=device,
             max_masks_per_frame=max_masks_per_candidate,
+            **corrclip_kwargs,
         )
         self.novelty_aggregation = novelty_aggregation
         self.min_bank_masks = min_bank_masks
@@ -368,6 +470,26 @@ class HybridSemanticExplorationScorer:
             aggregation=self.novelty_aggregation,
         )
         return novelty, True, int(cand_feats.shape[0]), sam_sec
+
+    def score_keyframe_render_coverage(
+        self,
+        keyframe_id: int,
+        rendered_rgb: np.ndarray,
+    ) -> tuple[float, bool, float]:
+        """
+        SAM+CLIP coverage: насколько рендер на позе keyframe покрывает его
+        сохранённые mask-эмбеддинги (language_features/{id}_f.npy).
+
+        Returns (coverage, ran_sam, sam_sec).
+        """
+        ref_feats = load_keyframe_mask_embeddings(self.bank.lang_feat_dir, keyframe_id)
+        if ref_feats.shape[0] == 0:
+            return 0.0, False, 0.0
+        t0 = time.perf_counter()
+        rend_feats = self.encoder.encode_rgb(rendered_rgb)
+        sam_sec = time.perf_counter() - t0
+        coverage = mask_embedding_coverage(rend_feats, ref_feats)
+        return coverage, True, sam_sec
 
     def score_batch(
         self,

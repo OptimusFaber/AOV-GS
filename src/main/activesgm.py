@@ -25,8 +25,14 @@ SOFTWARE.
 import json
 import numpy as np
 import os
+import re
 import sys
 sys.path.append(os.getcwd())
+
+from src.utils.display_utils import configure_headless_env
+from src.utils.exploration_path_plot import save_exploration_path_topdown
+
+configure_headless_env()
 from tensorboardX import SummaryWriter
 import torch
 
@@ -53,6 +59,7 @@ if __name__ == "__main__":
     args = argument_parsing()
     info_printer("Loading configuration...", 0, "Initialization")
     main_cfg = load_cfg(args)
+    info_printer(f"Result directory: {main_cfg.dirs.result_dir}", 0, "Initialization")
     # Save config to JSON (automatically cleans non-serializable objects)
     save_cfg_to_json(main_cfg, os.path.join(main_cfg.dirs.result_dir, 'main_cfg.json'))
     info_printer.update_total_step(main_cfg.general.num_iter)
@@ -100,6 +107,7 @@ if __name__ == "__main__":
     # a [sam_clip] section exists in the config.
     ##################################################
     sam_clip_extractor = None
+    sam_clip_stats_snapshot = None
     _save_clip = getattr(main_cfg.slam, 'save_clip_features', False)
     _disable_sam_clip_env = os.getenv("ACTIVESGM_DISABLE_SAM_CLIP", "0").strip().lower() in ("1", "true", "yes", "on")
     if _disable_sam_clip_env and _save_clip:
@@ -121,7 +129,7 @@ if __name__ == "__main__":
             sam_ckpt_path       = getattr(sam_clip_cfg, 'sam_ckpt_path', 'ckpts/sam_vit_h_4b8939.pth'),
             clip_model          = getattr(sam_clip_cfg, 'clip_model', 'ViT-B-32'),
             clip_pretrained     = getattr(sam_clip_cfg, 'clip_pretrained', 'openai'),
-            device              = getattr(sam_clip_cfg, 'device', 'cuda:0'),
+            device              = getattr(sam_clip_cfg, 'device', 'cuda:1'),
             queue_size          = getattr(sam_clip_cfg, 'queue_size', 8),
             submit_timeout_s    = getattr(sam_clip_cfg, 'submit_timeout_s', 1.0),
             bbox_pad_px         = getattr(sam_clip_cfg, 'bbox_pad_px', 20),
@@ -180,7 +188,7 @@ if __name__ == "__main__":
     open_vocab_index = None
     clip_cfg = getattr(main_cfg, 'clip', None)
     if clip_cfg is not None:
-        clip_device   = getattr(clip_cfg, 'device',       'cuda:0')
+        clip_device   = getattr(clip_cfg, 'device',       'cuda:1')
         clip_model    = getattr(clip_cfg, 'model_name',   'ViT-B-32')
         clip_pretrained = getattr(clip_cfg, 'pretrained', 'openai')
         clip_update_every = getattr(clip_cfg, 'update_every', 10)
@@ -233,7 +241,9 @@ if __name__ == "__main__":
         slam.init_exploration_map(T_sim2slam)
 
     planner.init_data(T_sim2slam)
-    if main_cfg.planner.method in ["active_gs", "active_gsv2", "active_gs_hybrid"]:
+    if main_cfg.planner.method in [
+        "active_gs", "active_gsv2", "active_gs_hybrid", "active_gs_hybrid_v3",
+    ]:
         planner.init_local_planner()
 
     ### attach CLIP index to the planner (if available) ###
@@ -242,6 +252,9 @@ if __name__ == "__main__":
 
     ### add timer for planning related timing ###
     planner.timer = timer
+
+    # Robot trajectory in Habitat RUB (for top-down path figure).
+    exploration_path_poses: list = []
 
     for i in range(main_cfg.general.num_iter):
     # for i in range(0, main_cfg.general.num_iter, 10):
@@ -259,7 +272,10 @@ if __name__ == "__main__":
             ## convert back to RDF (splatam) ##
             c2w_slam[:3, 1] *= -1 
             c2w_slam[:3, 2] *= -1
-        elif main_cfg.planner.method in ["active_lang", "active_gs", "active_gsv2", "active_gs_hybrid"]:
+        elif main_cfg.planner.method in [
+            "active_lang", "active_gs", "active_gsv2",
+            "active_gs_hybrid", "active_gs_hybrid_v3",
+        ]:
             ## convert back to RUB (habitat) ##
             c2w_sim = c2w_slam.cpu().numpy().copy() # RDF
             c2w_sim[:3, 1] *= -1 
@@ -319,6 +335,9 @@ if __name__ == "__main__":
             keyframes_extra_subdir=keyframes_extra_subdir,
         )
         timer.end(slam_state)
+
+        if main_cfg.planner.method == "predefined_traj":
+            exploration_path_poses.append(np.asarray(c2w_sim, dtype=np.float64).copy())
 
         ##################################################
         ### Submit new keyframes to SAM+CLIP extractor
@@ -411,7 +430,13 @@ if __name__ == "__main__":
                     f"(state: {planner.planning_state}).",
                     i + 1, "SAM+CLIP"
                 )
-                sam_clip_extractor.stop(wait=True, drain=False)
+                info_printer(
+                    "Flushing SAM+CLIP queue to avoid losing pending keyframes...",
+                    i + 1, "SAM+CLIP"
+                )
+                sam_clip_extractor.flush()
+                sam_clip_extractor.stop(wait=True, drain=True)
+                sam_clip_stats_snapshot = sam_clip_extractor.stats()
                 sam_clip_extractor = None
 
             if planner.planning_state in ["refinement", "post_refinement"]:
@@ -427,7 +452,13 @@ if __name__ == "__main__":
                 else:
                     slam.config['mapping']['num_iters'] = map_iter_og
                     
-            elif planner.planning_state == "done":
+            # Record pose after planning (RUB / Habitat world).
+            _pose_rub = c2w_slam.detach().cpu().numpy().copy()
+            _pose_rub[:3, 1] *= -1
+            _pose_rub[:3, 2] *= -1
+            exploration_path_poses.append(_pose_rub)
+
+            if planner.planning_state == "done":
                 break
 
             ##################################################
@@ -500,14 +531,70 @@ if __name__ == "__main__":
     if sam_clip_extractor is not None:
         info_printer("Waiting for SAM+CLIP extractor to finish...", 0, "SAM+CLIP")
         sam_clip_extractor.flush()
-        sam_clip_extractor.stop()
+        sam_clip_extractor.stop(wait=True, drain=True)
+        sam_clip_stats_snapshot = sam_clip_extractor.stats()
         info_printer("SAM+CLIP extraction complete.", 0, "SAM+CLIP")
+
+    ##################################################
+    ### Audit SAM+CLIP feature coverage
+    ##################################################
+    lang_feat_dir = os.path.join(main_cfg.dirs.result_dir, "language_features")
+    if os.path.isdir(lang_feat_dir):
+        pat = re.compile(r"^(\d+)_([sf])\.npy$")
+        ids_s = set()
+        ids_f = set()
+        for fn in os.listdir(lang_feat_dir):
+            m = pat.match(fn)
+            if m is None:
+                continue
+            fid = int(m.group(1))
+            if m.group(2) == "s":
+                ids_s.add(fid)
+            else:
+                ids_f.add(fid)
+        ids_both = ids_s & ids_f
+        n_poses = len(_kf_poses) if _save_kf_poses else 0
+        miss_pose = (set(_kf_poses.keys()) - ids_both) if _save_kf_poses else set()
+        info_printer(
+            "SAM+CLIP coverage audit: "
+            f"poses={n_poses}, s_files={len(ids_s)}, f_files={len(ids_f)}, paired={len(ids_both)}, "
+            f"missing_from_poses={len(miss_pose)}",
+            0, "SAM+CLIP"
+        )
+        if sam_clip_stats_snapshot is not None:
+            info_printer(
+                "SAM+CLIP worker stats: "
+                + ", ".join(f"{k}={v}" for k, v in sam_clip_stats_snapshot.items()),
+                0, "SAM+CLIP"
+            )
+    elif _save_clip:
+        info_printer(
+            f"SAM+CLIP coverage audit skipped: directory not found: {lang_feat_dir}",
+            0, "SAM+CLIP"
+        )
 
     if _save_kf_poses and _kf_poses:
         poses_path = os.path.join(main_cfg.dirs.result_dir, "keyframe_poses.json")
         with open(poses_path, 'w') as _f:
             json.dump({str(k): v for k, v in _kf_poses.items()}, _f)
         info_printer(f"Keyframe poses saved → {poses_path} ({len(_kf_poses)} frames)", 0, "Poses")
+
+    if exploration_path_poses:
+        _bbox = getattr(main_cfg.slam, "bbox_bound", None)
+        _bbox_xy = _bbox[:2] if _bbox is not None else None
+        _run_tag = os.path.basename(os.path.normpath(main_cfg.dirs.result_dir))
+        _path_png = save_exploration_path_topdown(
+            exploration_path_poses,
+            main_cfg.dirs.result_dir,
+            bbox_xy=_bbox_xy,
+            scene_name=main_cfg.general.scene,
+            run_tag=_run_tag,
+        )
+        info_printer(
+            f"Exploration path (top-down) saved → {_path_png} ({len(exploration_path_poses)} poses)",
+            0,
+            "Trajectory",
+        )
 
     ##################################################
     ### Save Final Mesh and Checkpoint
@@ -525,5 +612,14 @@ if __name__ == "__main__":
     ### Runtime Analysis
     ##################################################
     timer.time_analysis(method='mean')
-    print("per-iter SLAM_exploration_0: ", np.mean(timer.timers['SLAM_exploration_0']['duration'][4:][::5]))
-    print("per-iter SLAM_exploration_1: ", np.mean(timer.timers['SLAM_exploration_1']['duration'][3:][::5]))
+    for _timer_key, _skip, _stride in (
+        ("SLAM_exploration_0", 4, 5),
+        ("SLAM_exploration_1", 3, 5),
+        ("SLAM_exploration", 4, 5),
+    ):
+        _durations = timer.timers.get(_timer_key, {}).get("duration")
+        if _durations:
+            print(
+                f"per-iter {_timer_key}: ",
+                np.mean(_durations[_skip:][::_stride]),
+            )

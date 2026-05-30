@@ -1,8 +1,10 @@
 """
-ActiveGS planner with hybrid exploration on stage 0:
-geometry (unexplored pixels) + SAM+CLIP embedding novelty.
+ActiveGS Hybrid planner v3 for ActiveOpenSem.
 
-Stage 1+ uses pure geometry, same as ActiveGSPlanner.
+Combines:
+- SAM+CLIP hybrid exploration (stage 0) from ActiveGSHybridPlanner
+- v3 exploration/post-refinement mechanics (caps, revisit, dual stop)
+- SAM+CLIP mask coverage for post-refinement semantic stop criterion
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from src.planner.active_gs_planner import ActiveGSPlanner
+from src.planner.active_gs_planner_v3 import ActiveGSPlannerv3
 from src.planner.exploration_semantic_tactic import (
     HybridSemanticExplorationScorer,
     corrclip_kwargs_from_config,
@@ -29,8 +31,8 @@ SEMANTIC_PICK_BANNER = """
 """
 
 
-class ActiveGSHybridPlanner(ActiveGSPlanner):
-    """Геометрия + семантическая новизна SAM+CLIP на первом этапе исследования."""
+class ActiveGSHybridPlannerv3(ActiveGSPlannerv3):
+    """Geometry + SAM+CLIP exploration with v3 post-refinement dual stop."""
 
     def __init__(
         self,
@@ -50,20 +52,37 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
 
         self._sem_enabled_stages = set(sem_cfg.get("enabled_stages", [0]))
         self._sem_scorer: Optional[HybridSemanticExplorationScorer] = None
-        self._max_semantic_candidates = int(sem_cfg.get("max_semantic_candidates", 8))
+        self._max_semantic_candidates = int(
+            sem_cfg.get("max_semantic_candidates", 8)
+        )
         self._log_semantic_scores = sem_cfg.get("log_semantic_scores", True)
+        self._post_refine_semantic_enabled = bool(
+            sem_cfg.get("post_refinement_semantic", True)
+        )
+        self._post_refine_max_semantic_kfs = sem_cfg.get(
+            "post_refinement_max_keyframes", None
+        )
+        self._post_refine_semantic_eval_indices: Optional[List[int]] = None
 
         if self.main_cfg.slam.get("save_clip_features", False):
-            lang_dir = os.path.join(self.main_cfg.dirs.result_dir, "language_features")
+            lang_dir = os.path.join(
+                self.main_cfg.dirs.result_dir, "language_features"
+            )
             sam_cfg = self.main_cfg.get("sam_clip", {})
             corrclip = corrclip_kwargs_from_config(sam_cfg)
             self._sem_scorer = HybridSemanticExplorationScorer(
                 lang_feat_dir=lang_dir,
-                sam_ckpt_path=sam_cfg.get("sam_ckpt_path", "ckpts/sam_vit_b_01ec64.pth"),
+                sam_ckpt_path=sam_cfg.get(
+                    "sam_ckpt_path", "ckpts/sam_vit_b_01ec64.pth"
+                ),
                 clip_model=sam_cfg.get("clip_model", "ViT-B-16"),
-                clip_pretrained=sam_cfg.get("clip_pretrained", "laion2b_s34b_b88k"),
+                clip_pretrained=sam_cfg.get(
+                    "clip_pretrained", "laion2b_s34b_b88k"
+                ),
                 device=sam_cfg.get("device", "cuda:1"),
-                max_masks_per_candidate=sem_cfg.get("max_masks_per_candidate", 40),
+                max_masks_per_candidate=sem_cfg.get(
+                    "max_masks_per_candidate", 40
+                ),
                 novelty_aggregation=sem_cfg.get("novelty_aggregation", "mean"),
                 min_bank_masks=sem_cfg.get("min_bank_masks", 1),
                 **corrclip,
@@ -75,16 +94,16 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                 corrclip["corrclip_interclass_suppress_alpha"] > 0.0
             )
             info_printer(
-                "Hybrid semantic exploration enabled for stages "
-                f"{sorted(self._sem_enabled_stages)} (SAM+CLIP embedding novelty, "
-                f"top-{self._max_semantic_candidates} candidates per step, "
-                f"planner CorrCLIP={corrclip_on}).",
+                "ActiveOpenSem: SAM+CLIP exploration stages "
+                f"{sorted(self._sem_enabled_stages)}; post-refinement semantic="
+                f"{self._post_refine_semantic_enabled}; planner CorrCLIP="
+                f"{corrclip_on}.",
                 0,
                 self.__class__.__name__,
             )
         else:
             info_printer(
-                "Hybrid planner: save_clip_features=False, semantic scoring disabled.",
+                "ActiveOpenSem: save_clip_features=False — semantic scoring disabled.",
                 0,
                 self.__class__.__name__,
             )
@@ -126,15 +145,17 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
             return arr.numpy()
         return np.asarray(color)
 
+    def _render_rgb_uint8(self, gs_slam, cand_pose: torch.Tensor) -> np.ndarray:
+        color = gs_slam.render(cand_pose)[0]
+        img = color.permute(1, 2, 0).clamp(0, 1)
+        return (img.detach().cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+
     def score_exploration_semantics(
         self,
         cand_poses: torch.Tensor,
         gs_slam,
         geo_weights: torch.Tensor = None,
     ) -> Optional[torch.Tensor]:
-        """
-        Семантические веса только для top-K по геометрии (остальные = 1.0).
-        """
         if not self.use_semantic_exploration():
             return None
 
@@ -155,7 +176,6 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                 self.__class__.__name__,
             )
 
-        # Сначала банк keyframe-эмбеддингов (без SAM на кандидатах).
         bank_masks = self._sem_scorer.refresh_bank(
             keyframe_ids, keyframe_list=gs_slam.keyframe_list
         )
@@ -167,17 +187,9 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                     self.step,
                     self.__class__.__name__,
                 )
-            self._sem_scorer.last_stats = {
-                "bank_masks": bank_masks,
-                "n_candidates": n_cand,
-                "semantic_active": False,
-                "reason": "bank_too_small",
-            }
             return None
 
         raw_novelties: List[float] = []
-        total_sam_sec = 0.0
-        total_masks = 0
         for j, idx in enumerate(top_idx):
             if self._log_semantic_scores:
                 self.info_printer(
@@ -187,7 +199,9 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                     self.__class__.__name__,
                 )
             rgb = self._simulate_rgb_uint8(cand_poses[idx])
-            nov, ran_sam, n_masks, sam_sec = self._sem_scorer.score_candidate_rgb(rgb)
+            nov, ran_sam, n_masks, sam_sec = self._sem_scorer.score_candidate_rgb(
+                rgb
+            )
             if self._log_semantic_scores and ran_sam:
                 self.info_printer(
                     f"                            Semantic [{j + 1}/{len(top_idx)}] "
@@ -196,20 +210,6 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                     self.__class__.__name__,
                 )
             raw_novelties.append(nov)
-            if ran_sam:
-                total_sam_sec += sam_sec
-                total_masks += n_masks
-
-        self._sem_scorer._fill_last_stats(
-            bank_masks=bank_masks,
-            n_candidates=n_cand,
-            n_sam_calls=len(top_idx),
-            total_cand_masks=total_masks,
-            bank_sec=0.0,
-            sam_sec=total_sam_sec,
-            scores=raw_novelties,
-        )
-        stats = self._sem_scorer.last_stats
 
         sem_weights = torch.ones(n_cand, dtype=torch.float32)
         sub_sm = F.softmax(
@@ -218,19 +218,86 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
         )
         for local_i, pool_idx in enumerate(top_idx):
             sem_weights[pool_idx] = sub_sm[local_i]
-
-        if self._log_semantic_scores:
-            self.info_printer(
-                f"                            Semantic bank     : {stats['bank_masks']} masks, "
-                f"SAM on {stats['n_sam_calls']}/{len(top_idx)} cands "
-                f"({stats['total_cand_masks']} mask embs, {stats['sam_sec']:.1f}s)",
-                self.step,
-                self.__class__.__name__,
-            )
-            self.info_printer(
-                f"                            Semantic novelty  : min={stats['novelty_min']:.3f} "
-                f"max={stats['novelty_max']:.3f} mean={stats['novelty_mean']:.3f}",
-                self.step,
-                self.__class__.__name__,
-            )
         return sem_weights
+
+    def compute_post_refinement_seman_igs(
+        self,
+        cand_data,
+        cand_keys,
+        cand_poses: torch.Tensor,
+        gs_slam,
+        color_igs: Optional[torch.Tensor] = None,
+    ) -> Optional[torch.Tensor]:
+        if (
+            not self._post_refine_semantic_enabled
+            or self._sem_scorer is None
+        ):
+            return None
+
+        indices = list(range(len(cand_keys)))
+        max_kfs = self._post_refine_max_semantic_kfs
+        if (
+            max_kfs is not None
+            and color_igs is not None
+            and len(indices) > int(max_kfs)
+        ):
+            sorted_idx = torch.argsort(color_igs).tolist()
+            indices = sorted_idx[: int(max_kfs)]
+
+        self._post_refine_semantic_eval_indices = indices
+
+        scores: List[float] = []
+        score_by_idx = {}
+        total_sam_sec = 0.0
+
+        self.info_printer(
+            f"Post-refinement semantic eval on {len(indices)}/{len(cand_keys)} "
+            f"global keyframes (SAM+CLIP coverage)…",
+            self.step,
+            self.__class__.__name__,
+        )
+
+        for j, i in enumerate(indices):
+            kf_id = int(cand_keys[i])
+            rgb = self._render_rgb_uint8(gs_slam, cand_poses[i])
+            coverage, ran_sam, sam_sec = (
+                self._sem_scorer.score_keyframe_render_coverage(kf_id, rgb)
+            )
+            if ran_sam:
+                total_sam_sec += sam_sec
+            score_by_idx[i] = coverage
+            if self._log_semantic_scores:
+                self.info_printer(
+                    f"  Semantic KF [{j + 1}/{len(indices)}] id={kf_id} "
+                    f"coverage={coverage:.3f}, {sam_sec:.1f}s",
+                    self.step,
+                    self.__class__.__name__,
+                )
+
+        for i in range(len(cand_keys)):
+            scores.append(float(score_by_idx.get(i, 0.0)))
+
+        self.info_printer(
+            f"Post-refinement semantic eval done ({total_sam_sec:.1f}s total).",
+            self.step,
+            self.__class__.__name__,
+        )
+        return torch.tensor(scores, dtype=torch.float32)
+
+    def _post_refinement_quality_met(
+        self,
+        color_igs: torch.Tensor,
+        seman_igs: Optional[torch.Tensor],
+    ) -> bool:
+        color_thre = self.main_cfg.slam.global_keyframe.color_thre
+        color_req = (color_igs > color_thre).sum() / len(color_igs) > 0.9
+        if seman_igs is None:
+            return bool(color_req)
+
+        eval_idx = self._post_refine_semantic_eval_indices
+        if eval_idx is not None and len(eval_idx) < len(seman_igs):
+            sem = seman_igs[eval_idx]
+        else:
+            sem = seman_igs
+        seman_req = (sem > self._get_seman_thre()).sum() / len(sem) > 0.9
+        return bool(color_req and seman_req)
