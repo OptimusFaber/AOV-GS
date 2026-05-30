@@ -565,7 +565,9 @@ bash scripts/aov-gs/run_query_lang_fields_office0.sh \
 - **`scripts/data/`** — загрузка и генерация Replica / MP3D.  
 - **`scripts/evaluation/`** — оценки 3D / семантики / NVS.  
 - **`scripts/aov-gs/`** — шаги 01–03, гриды, **`pipeline_gs_open_vocab.sh`**, **`_gpu_helpers.sh`**.  
-- **`scripts/ablation/`** — бенчмарки ActiveSem / Hybrid, `run_scene_lang_pipeline.sh`.  
+- **`scripts/ablation/`** — бенчмарки ActiveSem / ActiveOpenSem, `run_scene_lang_pipeline.sh`.
+- **`scripts/aov-gs/run_active_geom_all_scenes.sh`** — batch ActiveGeom на всех сценах Replica.
+- **`scripts/aov-gs/run_active_open_sem_corrclip_in_planner_all_scenes.sh`** — batch ActiveOpenSem + CorrCLIP in planner.  
 - **`compute_miou_p_traj.py`** — mIoU_p (SAM+CLIP pseudo на rendered RGB).  
 - **`eval_lang_field_segmentation.py`** — старая оценка (один level); для traj используйте **`validate_lang_field_traj.py`**.  
 - **`eval_clip_sam_miou.py`** — baseline 2D SAM+CLIP без 3DGS.

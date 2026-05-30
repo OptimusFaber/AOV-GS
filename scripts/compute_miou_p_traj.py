@@ -18,7 +18,7 @@ Example::
 
     python scripts/compute_miou_p_traj.py \\
       --scene office0 \\
-      --result_dir results/Replica/office0/ActiveOpenSemHybrid/run_0 \\
+      --result_dir results/Replica/office0/ActiveOpenSem/run_0 \\
       --traj_txt /mnt/data/replica_sim_nvs/office0/traj.txt
 """
 
