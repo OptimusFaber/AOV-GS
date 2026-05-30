@@ -5,7 +5,7 @@ import os
 from mmengine.config import read_base
 
 with read_base():
-    from .ActiveOpenSem import *
+    from .ActiveOpenSem_base import *
 
 dirs["result_dir"] = os.path.join("results", general["dataset"], general["scene"], "ActiveGeom")
 visualizer["vis_rgbd"] = False
