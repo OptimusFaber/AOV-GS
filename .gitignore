@@ -3,15 +3,14 @@
 .DS_Store
 **/.DS_Store
 /data/checkpoint/
-# third_parties: tracked via git submodules (see setup_third_parties.sh); exclude local builds only
-/third_parties/habitat_sim/
+# third_parties: not in git — clone via setup_third_parties.sh or git clone --recursive
+/third_parties/*
+!/third_parties/README.md
 third_parties/**/build/
 third_parties/**/dist/
 third_parties/**/__pycache__/
 third_parties/**/*.egg-info/
 third_parties/**/*.so
-third_parties/**/.ninja_log
-third_parties/**/compile_commands.json
 *.bin
 *.pth
 /results*/

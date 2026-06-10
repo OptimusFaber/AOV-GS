@@ -1,43 +1,34 @@
 # `third_parties/`
 
-Зависимости Python-кода AOV-GS (Co-SLAM, SplaTAM, neural_slam_eval, channel rasterizers).
+Зависимости Python-кода AOV-GS. **В git не хранятся** (как в [ActiveSGM](https://github.com/lly00412/ActiveSGM)) — подтягиваются после клона.
 
-## Как получить (один раз)
-
-**Рекомендуется** — клонировать репозиторий с submodules:
+## Установка
 
 ```bash
 git clone --recursive https://github.com/OptimusFaber/AOV-GS
 cd AOV-GS
 ```
 
-Если уже склонировали без `--recursive`:
+Если клонировали без `--recursive`:
 
 ```bash
 bash scripts/installation/setup_third_parties.sh
-# или: git submodule update --init --recursive
 ```
 
-Скрипт подтягивает репозитории из [`.gitmodules`](../.gitmodules) (~200 MB исходников).
+Или вручную: `git submodule update --init --recursive` (см. [`.gitmodules`](../.gitmodules)).
 
-## Что внутри
+## Каталоги
 
-| Каталог | Назначение |
-|---------|------------|
-| `coslam` | Co-SLAM utils, colormap |
-| `splatam` | SplaTAM datasets / slam helpers |
-| `neural_slam_eval` | метрики реконструкции / NVS |
-| `channel_rasterization` | dense semantic rasterizer (ActiveSem) |
-| `sparse_channel_rasterization` | sparse semantic rasterizer |
+| Путь | Назначение | Нужен для |
+|------|------------|-----------|
+| `coslam/` | Co-SLAM utils | визуализация, RRT |
+| `splatam/` | SplaTAM helpers | SLAM, NVS |
+| `neural_slam_eval/` | mesh / recon metrics | eval_recon |
+| `channel_rasterization/` | dense semantic rasterizer | **ActiveSem** (опционально) |
+| `sparse_channel_rasterization/` | sparse semantic rasterizer | **ActiveSem** (опционально) |
 
-## Чего здесь нет
+Для **`ActiveOpenSem`** + языкового поля достаточно `coslam`, `splatam`, `neural_slam_eval` (~150 MB).
 
-**`habitat_sim/`** (~5 GB исходников + сборка) — **не** хранится в git.  
-Рантайм Habitat ставится через conda: `bash scripts/installation/conda_env/build_sem.sh`.
+## `habitat_sim/`
 
-## Почему не один большой коммит в git
-
-- `habitat_sim` слишком тяжёлый для GitHub.
-- Остальные пакеты (~200 MB) подключаются как **git submodules** — один `clone --recursive` или `setup_third_parties.sh`, без ручного копирования из других проектов.
-
-Локальные артефакты сборки (`build/`, `*.so`, `__pycache__`) в git не попадают (см. `.gitignore`).
+Не входит в `third_parties/` git. Habitat ставится через conda: `bash scripts/installation/conda_env/build_sem.sh`.

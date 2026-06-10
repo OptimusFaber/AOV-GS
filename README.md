@@ -1,6 +1,8 @@
 # AOV-GS — Active Open-Vocabulary 3D Gaussian Splatting
 
-**AOV-GS** — самостоятельный проект активного исследования сцены (**SplaTAM**) и **открытого языкового поля** (SAM+CLIP → LangSplatV2 или legacy LangSplat).
+**Exploring while Grounding: Open-Vocabulary Active Mapping with 3D Gaussian Splatting**
+
+Самостоятельный проект: активное исследование сцены (**SplaTAM**), сбор SAM+CLIP-признаков и **открытое языковое поле** (LangSplatV2 / legacy LangSplat).
 
 Репозиторий: [github.com/OptimusFaber/AOV-GS](https://github.com/OptimusFaber/AOV-GS)
 
