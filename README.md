@@ -1,14 +1,16 @@
 # AOV-GS — Active Open-Vocabulary 3D Gaussian Splatting
 
-Ветка на базе [ActiveSGM](https://github.com/lly00412/ActiveSGM): активное исследование (**SplaTAM**) и **открытое языковое поле** (SAM+CLIP → LangSplatV2 или legacy LangSplat).
+**AOV-GS** — самостоятельный проект активного исследования сцены (**SplaTAM**) и **открытого языкового поля** (SAM+CLIP → LangSplatV2 или legacy LangSplat).
+
+Репозиторий: [github.com/OptimusFaber/AOV-GS](https://github.com/OptimusFaber/AOV-GS)
 
 ---
 
 ## Содержание
 
 1. [Быстрый старт](#быстрый-старт)
-2. [Документация по разделам](#документация-по-разделам)
-3. [`third_parties/` (обязательно)](#third_parties-обязательно)
+2. [Документация](#документация)
+3. [`third_parties/`](#third_parties)
 4. [Основные команды](#основные-команды)
 5. [GPU и CUDA](#gpu-и-cuda)
 6. [NVS и валидация](#nvs-и-валидация)
@@ -20,53 +22,64 @@
 ## Быстрый старт
 
 ```bash
-git clone <repo-url> AOV-GS && cd AOV-GS
+git clone --recursive https://github.com/OptimusFaber/AOV-GS
+cd AOV-GS
 
-# 1. third_parties (не в git) — см. ниже
-# 2. окружение
-bash scripts/installation/conda_env/build_sem.sh
+bash scripts/installation/quick_start.sh
+```
+
+Скрипт `quick_start.sh` по шагам:
+
+1. `third_parties/` — git submodules / авто-клон (~200 MB)
+2. conda-окружение `active-sgm` (~12 GB)
+3. pip: open_clip, segment-anything, scikit-learn
+4. чекпойнт SAM → `ckpts/sam_vit_b_01ec64.pth` (~400 MB)
+5. данные Replica + Habitat + NVS
+
+**Место на диске:** планируйте **≥ 30 GB** свободного (conda ~12 GB, Replica и производные данные ~7–17 GB, остальное ~1 GB).
+
+Опции: `--skip-env`, `--skip-data`, `--skip-sam`, `--yes` (без подтверждения). Подробности: `bash scripts/installation/quick_start.sh --help`.
+
+Если клонировали **без** `--recursive`:
+
+```bash
+bash scripts/installation/setup_third_parties.sh
+```
+
+После установки:
+
+```bash
 conda activate active-sgm
-pip install open_clip_torch scikit-learn tqdm
-pip install git+https://github.com/facebookresearch/segment-anything.git
-
-# 3. данные Replica — см. scripts/data/README.md
-bash scripts/data/replica_download.sh data/replica_v1
-bash scripts/data/replica_update.sh data/replica_v1
-bash scripts/data/replica_slam_download.sh
-bash scripts/data/generate_replica_habitat.sh all
-bash scripts/data/generate_replica_nvs.sh all
-
-# 4. SAM checkpoint → ckpts/sam_vit_b_01ec64.pth
-
-# 5. полный пайплайн
-bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0
+# дальше — scripts/aov-gs/README.md
 ```
 
 ---
 
-## Документация по разделам
+## Документация
 
 | Тема | Файл |
 |------|------|
-| **Пайплайн 01–03**, batch-скрипты, **GPU подробно** | [scripts/aov-gs/README.md](scripts/aov-gs/README.md) |
-| **Conda, HPC, Docker** | [scripts/installation/README.md](scripts/installation/README.md) |
-| **Данные Replica / NVS** | [scripts/data/README.md](scripts/data/README.md) |
-| **Docker-образ** | [docker/README.md](docker/README.md) |
+| Пайплайн 01–03, batch, **GPU** | [scripts/aov-gs/README.md](scripts/aov-gs/README.md) |
+| Conda, HPC, quick start | [scripts/installation/README.md](scripts/installation/README.md) |
+| Данные Replica / NVS | [scripts/data/README.md](scripts/data/README.md) |
+| `third_parties/` | [third_parties/README.md](third_parties/README.md) |
+| Docker | [docker/README.md](docker/README.md) |
 
 ---
 
-## `third_parties/` (обязательно)
+## `third_parties/`
 
-Каталог в **`.gitignore`** — после `git clone` его нет. Без него падают импорты `third_parties.coslam`, `third_parties.splatam` и NVS.
+Зависимости (~200 MB): Co-SLAM, SplaTAM, neural_slam_eval, channel rasterizers.
 
-Нужны: `coslam`, `splatam`, `neural_slam_eval`, `channel_rasterization`, `sparse_channel_rasterization`.
+**Не нужно** вручную копировать из других репозиториев:
 
 ```bash
-# Вариант A: ActiveSGM с --recursive → скопировать third_parties/
-# Вариант B: соседний клон с уже собранными deps
-rsync -a ../AOV-GS-V2/third_parties/ third_parties/
-# Вариант C: вручную по .gitmodules
+git clone --recursive https://github.com/OptimusFaber/AOV-GS
+# или после обычного clone:
+bash scripts/installation/setup_third_parties.sh
 ```
+
+**`habitat_sim`** (~5 GB) в git не хранится — ставится через conda (`build_sem.sh`).
 
 Проверка:
 
@@ -79,46 +92,18 @@ test -f third_parties/splatam/utils/slam_external.py && echo OK
 
 ## Основные команды
 
-Подробные аргументы — в [scripts/aov-gs/README.md](scripts/aov-gs/README.md).
-
-### Полный open-vocab (рекомендуется)
+См. [scripts/aov-gs/README.md](scripts/aov-gs/README.md).
 
 ```bash
+# Полный open-vocab
 bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0
-# CorrCLIP + фиксированный run:
-# bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 corrclip langsplatv2 run_corrclip
-```
 
-| `MASK_COLLECTOR` | Описание |
-|------------------|----------|
-| `sam` | обычный SAM+CLIP |
-| `corrclip` | merge масок + inter-class suppression |
-
-| `LANG_MODE` | Описание |
-|-------------|----------|
-| `langsplatv2` | codebook, без AE (default) |
-| `langsplat` | legacy + автоэнкодер |
-
-### Пошагово
-
-```bash
-# 1 — SLAM + SAM/CLIP
+# Пошагово
 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0
-
-# 2 — LangSplatV2: проверка фич
 bash scripts/aov-gs/02_validate_features_langsplatv2.sh results/Replica/office0/ActiveOpenSem/run_0
-
-# 3 — языковое поле
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
   results/Replica/office0/ActiveOpenSem/run_0 64 s 30000 cuda:0 1 4 auto 1.0
 ```
-
-### Другие режимы
-
-| Скрипт | Режим |
-|--------|-------|
-| `pipeline_gs_no_segmenter.sh` | только геометрия (`ActiveGS`) |
-| `pipeline_gs_oneformer.sh` | OneFormer closed-set (`ActiveSem`) |
 
 Результаты: `results/Replica/<scene>/<EXP>/run_N/`.
 
@@ -126,49 +111,32 @@ bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
 
 ## GPU и CUDA
 
-Краткая шпаргалка. **Полная таблица и примеры** — [scripts/aov-gs/README.md § GPU](scripts/aov-gs/README.md#gpu-и-cuda).
+Краткая шпаргалка. Подробно: [scripts/aov-gs/README.md § GPU](scripts/aov-gs/README.md#gpu-и-cuda).
 
 | Что | Куда писать | Default |
 |-----|-------------|---------|
-| Видимые GPU в shell | `GPU` или `CUDA_VISIBLE_DEVICES` | `01_*.sh`: `GPU=0,1` |
-| SplaTAM | `primary_device` в `configs/Replica/replica_splatam_s.py` | `cuda:0` |
-| SAM + CLIP | `sam_clip.device` в `configs/Replica/<scene>/ActiveOpenSem_base.py` | `cuda:1` |
-| OneFormer | `semantic_device` в `ActiveSem.py` | `cuda:0` |
-| Обучение lang field | 5-й аргумент `DEVICE` в `03_*.sh` | `cuda:0` |
+| Видимые GPU | `GPU` / `CUDA_VISIBLE_DEVICES` | `01_*.sh`: `GPU=0,1` |
+| SplaTAM | `primary_device` в `replica_splatam_s.py` | `cuda:0` |
+| SAM + CLIP | `sam_clip.device` в `ActiveOpenSem_base.py` | **`cuda:0`** |
+| Lang field train | `DEVICE` в `03_*.sh` | `cuda:0` |
 | Python-скрипты | `--device` | `cuda:0` |
 
-**Две карты** (SLAM на 0, SAM на 1) — конфиг уже настроен для `office0`; запуск:
+**Две GPU** (SLAM на 0, SAM на 1): в конфиге `sam_clip.device = "cuda:1"`, запуск `GPU=0,1 bash scripts/aov-gs/01_slam_exploration.sh ...`
 
-```bash
-GPU=0,1 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
-```
+**Lang field на GPU 1:** `cuda:1` в аргументе `03_*.sh` (auto-remap через `_gpu_helpers.sh`).
 
-**Lang field на физической GPU 1** — rasterizer требует logical `cuda:0`:
-
-```bash
-bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
-  results/.../run_0 64 s 30000 cuda:1 1 4 auto 1.0
-# скрипт сам выставит CUDA_VISIBLE_DEVICES=1
-```
-
-**Одна GPU:** `GPU=0` и в конфиге `sam_clip.device = "cuda:0"`.
+Переопределение SAM без правки конфига: `SAM_CLIP_DEVICE=cuda:1`.
 
 ---
 
 ## NVS и валидация
-
-**Novel view synthesis** (PSNR / SSIM / LPIPS на `data/replica_sim_nvs/`):
 
 ```bash
 python scripts/run_nvs_validation.py \
   --cfg configs/Replica/office0/ActiveOpenSem.py \
   --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
   --stage eval_exploration_stage_1
-```
 
-**mIoU на traj** (LangSplatV2):
-
-```bash
 python scripts/validate_lang_field_traj.py \
   --scene office0 \
   --result_dir results/Replica/office0/ActiveOpenSem/run_0 \
@@ -176,42 +144,21 @@ python scripts/validate_lang_field_traj.py \
   --device cuda:0
 ```
 
-**Текстовый запрос:**
-
-```bash
-python scripts/query_language_field.py \
-  --checkpoint results/.../splatam/final/params.npz \
-  --lang_field results/.../lang_field_sk64_l1/lang_field.pt \
-  --text "a sofa" --lang_mode auto --out results/query_sofa
-```
-
-Другие скрипты: `render_view_from_pose.py`, `render_query_from_pose.py`, `compute_miou_p_traj.py` — флаги в `--help`.
-
 ---
 
 ## Структура репозитория
 
 | Путь | Назначение |
 |------|------------|
-| `src/main/activesgm.py` | активное исследование + SAM/CLIP |
-| `src/slam/` | SplaTAM, LangSplatam |
+| `src/main/activesgm.py` | SLAM + SAM/CLIP |
 | `scripts/aov-gs/` | пайплайн 01–03 |
-| `scripts/train_language_field.py` | обучение языкового поля |
+| `scripts/installation/quick_start.sh` | установка «в один заход» |
+| `third_parties/` | vendored deps (submodules) |
 | `configs/Replica/<scene>/` | конфиги сцен |
-| `data/replica_sim_nvs/` | NVS GT |
-| `src/utils/display_utils.py` | headless (`ENABLE_VIS=0`) |
 
 ---
 
 ## Лицензии
 
-Код использует SplaTAM, ActiveSGM, Habitat и др.; лицензии — в `third_parties/`.
-
-```bibtex
-@inproceedings{chen2025understanding,
-  title={Understanding while Exploring: Semantics-driven Active Mapping},
-  author={Chen, Liyan and Zhan, Huangying and Yin, Hairong and Xu, Yi and Mordohai, Philippos},
-  booktitle={NeurIPS},
-  year={2025}
-}
-```
+MIT — см. [LICENSE](LICENSE).  
+Сторонние компоненты (SplaTAM, Co-SLAM, Habitat и др.) — лицензии в соответствующих репозиториях / `third_parties/`.

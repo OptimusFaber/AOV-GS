@@ -143,7 +143,7 @@ bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 corrclip langsplatv2
 |-----------|------------|----------|---------|
 | **Видимые GPU** (shell) | env | `CUDA_VISIBLE_DEVICES` / `GPU` | `01_*.sh`: `GPU=0,1` |
 | **SplaTAM** | конфиг | `primary_device` в `configs/Replica/replica_splatam_s.py` | `cuda:0` |
-| **SAM + CLIP** | конфиг | `sam_clip.device` в `ActiveOpenSem_base.py` | `cuda:1` |
+| **SAM + CLIP** | конфиг / env | `sam_clip.device` или `SAM_CLIP_DEVICE` | `cuda:0` |
 | **OneFormer** | конфиг | `semantic_device` в `ActiveSem.py` | `cuda:0` |
 | **Lang field train** | аргумент shell | `DEVICE` в `03_*.sh` | `cuda:0` |
 | **Python-скрипты** | CLI | `--device` | `cuda:0` |
@@ -155,21 +155,23 @@ bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 corrclip langsplatv2
 GPU=0 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
 ```
 
-В конфиге `ActiveOpenSem_base.py` для одной карты поставьте `sam_clip.device = "cuda:0"` (или оставьте `cuda:1` — упадёт, если GPU одна).
+По умолчанию SAM+CLIP на **`cuda:0`** (как и SplaTAM).
 
 ### Две GPU: SLAM на 0, SAM/CLIP на 1
 
 `01_slam_exploration.sh` по умолчанию: `GPU=0,1` → обе карты видны процессу.
 
-В конфиге (уже так для `office0`):
+В конфиге:
 
 ```python
 # configs/Replica/replica_splatam_s.py
 primary_device = "cuda:0"
 
-# configs/Replica/office0/ActiveOpenSem_base.py
-sam_clip = dict(device = "cuda:1", ...)
+# configs/Replica/<scene>/ActiveOpenSem_base.py
+sam_clip = dict(device = "cuda:1", ...)   # только при двух GPU
 ```
+
+Или без правки конфига: `SAM_CLIP_DEVICE=cuda:1`.
 
 Запуск:
 

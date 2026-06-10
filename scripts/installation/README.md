@@ -2,65 +2,75 @@
 
 ## Содержание
 
-1. [Conda (рекомендуется)](#conda-рекомендуется)
-2. [HPC без libcuda](#hpc-без-libcuda)
-3. [Open-vocabulary пакеты](#open-vocabulary-пакеты)
-4. [Docker](#docker)
+1. [Быстрый старт (один скрипт)](#быстрый-старт-один-скрипт)
+2. [`third_parties`](#third_parties)
+3. [Conda вручную](#conda-вручную)
+4. [HPC без libcuda](#hpc-без-libcuda)
+5. [Docker](#docker)
 
 ---
 
-## Conda (рекомендуется)
-
-**Python 3.8**, **CUDA 11.7** (или совместимый драйвер).
+## Быстрый старт (один скрипт)
 
 ```bash
-cd /path/to/AOV-GS
+git clone --recursive https://github.com/OptimusFaber/AOV-GS
+cd AOV-GS
+bash scripts/installation/quick_start.sh
+```
+
+Делает всё для первого запуска: submodules, conda, pip, SAM, Replica.
+
+| Этап | Размер (оценка) |
+|------|-----------------|
+| conda `active-sgm` | ~12 GB |
+| Replica meshes + SLAM/Habitat/NVS | ~7–17 GB |
+| SAM + third_parties | ~0.6 GB |
+| **Итого** | **≥ 30 GB** свободного места |
+
+```bash
+bash scripts/installation/quick_start.sh --help   # --skip-env, --skip-data, --yes, …
+```
+
+После завершения: `conda activate active-sgm` → [пайплайн](../aov-gs/README.md).
+
+---
+
+## `third_parties`
+
+```bash
+bash scripts/installation/setup_third_parties.sh
+```
+
+Или при клоне: `git clone --recursive …`  
+Подробнее: [third_parties/README.md](../../third_parties/README.md).
+
+---
+
+## Conda вручную
+
+**Python 3.8**, **CUDA 11.7**.
+
+```bash
 bash scripts/installation/conda_env/build_sem.sh
 conda activate active-sgm
+pip install open_clip_torch scikit-learn tqdm
+pip install git+https://github.com/facebookresearch/segment-anything.git
+bash scripts/installation/download_sam_ckpt.sh
 ```
 
-Скрипт устанавливает: PyTorch 1.13.1+cu117, habitat-sim (headless), pytorch3d, tiny-cuda-nn, diff-gaussian-rasterization-w-depth и зависимости SplaTAM.
-
-Проверка:
-
-```bash
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-```
+Проверка: `python -c "import torch; print(torch.cuda.is_available())"`
 
 ---
 
 ## HPC без libcuda
 
-Если `tinycudann` падает с `cannot find -lcuda` (типично для cds2 без sudo):
-
 ```bash
 bash scripts/installation/conda_env/build_sem_cds2.sh
-# или только фикс TCNN в уже созданном env:
-bash scripts/installation/conda_env/build_sem_cds2.sh --fix-tcnn
+# или: bash scripts/installation/conda_env/build_sem_cds2.sh --fix-tcnn
 ```
-
----
-
-## Open-vocabulary пакеты
-
-После `build_sem.sh`:
-
-```bash
-pip install open_clip_torch
-pip install git+https://github.com/facebookresearch/segment-anything.git
-pip install scikit-learn   # LangSplatV2 (KMeans)
-pip install tqdm           # validate_lang_field_traj
-```
-
-**SAM checkpoint:** `ckpts/sam_vit_b_01ec64.pth`  
-[Segment Anything — model checkpoints](https://github.com/facebookresearch/segment-anything#model-checkpoints)
-
-**Channel rasterization** (семантический рендер с большим числом каналов, ActiveSem):  
-[ActiveSGM — build CUDA tool](https://github.com/lly00412/ActiveSGM#build-cuda-tool-for-semantic-rendering).  
-Для **`ActiveOpenSem` + языкового поля** обычно **не нужен**.
 
 ---
 
 ## Docker
 
-См. [docker/README.md](../../docker/README.md) — образ CUDA 11.7, перенос на офлайн-HPC через `docker save/load`.
+[docker/README.md](../../docker/README.md)
