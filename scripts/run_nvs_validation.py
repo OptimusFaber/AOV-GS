@@ -152,7 +152,10 @@ def main() -> None:
 
     info_printer("Initializing SLAM...", 0, "Initialization")
     slam = init_SLAM_model(main_cfg, info_printer, logger)
-    slam.load_params(stage=args.stage)
+    if hasattr(slam, "load_params_by_step"):
+        slam.load_params_by_step(step=0, stage=args.stage)
+    else:
+        slam.load_params(stage=args.stage)
 
     suffix = _eval_clean_suffix(args.stage)
     if args.stage.startswith("eval_") and suffix != args.stage:

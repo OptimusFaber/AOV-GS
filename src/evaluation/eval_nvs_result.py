@@ -71,7 +71,10 @@ if __name__ == "__main__":
     ### initialize SLAM module
     ##################################################
     slam = init_SLAM_model(main_cfg, info_printer, logger)
-    slam.load_params(stage=args.stage)
+    if hasattr(slam, "load_params_by_step"):
+        slam.load_params_by_step(step=0, stage=args.stage)
+    else:
+        slam.load_params(stage=args.stage)
 
     # eval_result builds eval_dir = splatam/eval_<suffix>; training uses suffix "exploration_stage_N"
     # (params live there). If user passes "eval_exploration_stage_1", strip the duplicate "eval_".

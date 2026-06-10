@@ -84,6 +84,80 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=No
 
     return transformed_gaussians
 
+
+def render_rgb_eval_pose(
+    dataset,
+    final_params,
+    time_idx: int,
+    *,
+    train_first_abs_c2w=None,
+    align_eval_world: bool = False,
+):
+    """Render one RGB view using the **same convention as** ``eval()`` ("SplaTAM-AOV" eval path).
+
+    Gaussians at frame ``time_idx`` are transformed with ``transform_to_frame(..., rel_w2c=gt_w2c_k)``.
+    The rasterizer camera is built **once** from dataset frame 0 (intrinsics + ``first_frame_w2c``),
+    **not** from the current pose — matching ``setup_camera`` inside ``eval()`` when ``time_idx == 0``.
+    """
+    use_world_align = (
+        align_eval_world
+        and train_first_abs_c2w is not None
+        and hasattr(dataset, "poses_absolute")
+    )
+    if align_eval_world and not use_world_align:
+        print(
+            "Warning: align_eval_world requested but poses_absolute or train_first_abs_c2w missing; "
+            "using dataset relative poses (cross-sequence metrics may be wrong)."
+        )
+
+    color0, _depth0, intr0, pose0 = dataset[0]
+    if use_world_align:
+        assert train_first_abs_c2w is not None
+        T0 = dataset.poses_absolute[0].to(device=pose0.device, dtype=pose0.dtype)
+        t0 = train_first_abs_c2w.to(device=pose0.device, dtype=pose0.dtype)
+        first_frame_w2c = torch.linalg.inv(T0) @ t0
+        note = "gt_w2c = inv(poses_absolute[k]) @ train_first_abs_c2w (align_eval_world)"
+    else:
+        first_frame_w2c = torch.linalg.inv(pose0)
+        note = "gt_w2c = inv(pose) (dataset relative / no cross-sequence align)"
+
+    intr0 = intr0[:3, :3]
+    color0 = color0.permute(2, 0, 1) / 255.0
+
+    cam = setup_camera(
+        color0.shape[2],
+        color0.shape[1],
+        intr0.cpu().numpy(),
+        first_frame_w2c.detach().cpu().numpy(),
+    )
+
+    color_k, _depth_k, _intr_k, pose_k = dataset[time_idx]
+    if use_world_align:
+        assert train_first_abs_c2w is not None
+        Tk = dataset.poses_absolute[time_idx].to(device=pose_k.device, dtype=pose_k.dtype)
+        t0 = train_first_abs_c2w.to(device=pose_k.device, dtype=pose_k.dtype)
+        gt_w2c = torch.linalg.inv(Tk) @ t0
+    else:
+        gt_w2c = torch.linalg.inv(pose_k)
+
+    transformed_gaussians = transform_to_frame(
+        final_params,
+        time_idx,
+        gaussians_grad=False,
+        camera_grad=False,
+        rel_w2c=gt_w2c,
+    )
+    rendervar = transformed_params2rendervar(final_params, transformed_gaussians)
+
+    with torch.no_grad():
+        im, _, _ = Renderer(raster_settings=cam)(**rendervar)
+
+    rgb = im.detach().cpu().permute(1, 2, 0).clamp(0, 1).numpy()
+    bgr = cv2.cvtColor((rgb * 255.0).astype(np.uint8), cv2.COLOR_RGB2BGR)
+    w2c_np = gt_w2c.detach().cpu().numpy().astype(np.float64)
+    return bgr, w2c_np, note, color_k
+
+
 def resize_tensor(image, target_height, target_width, mode='bilinear'):
     # Resize tensor using F.interpolate
     return F.interpolate(image.unsqueeze(0), size=(target_height, target_width), mode=mode).squeeze(0)
