@@ -8,7 +8,10 @@
 #   ActiveOpenSem       → results/Replica/{SCENE}/ActiveOpenSem/run_N/
 #
 # Использование:
-#   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG]
+#   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]
+#
+#   RESULT_RUN:      run_0, run_1, … (опционально; иначе auto run_N)
+#   MASK_COLLECTOR:  sam (default) | corrclip
 #
 #   EXP: ActiveOpenSemGeom | ActiveOpenSemPassive | ActiveOpenSem | ActiveOpenSem_base | ...
 #   ENABLE_VIS: 0 = headless, 1 = live OpenCV windows
@@ -26,10 +29,26 @@ EXP=${2:-ActiveOpenSemGeom}
 SEED=${3:-0}
 ENABLE_VIS=${4:-0}
 DEBUG=${5:-0}
+RESULT_RUN=${6:-}
+MASK_COLLECTOR=${7:-sam}
 
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=${GPU:-0,1}
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_DIR"
+
+case "${MASK_COLLECTOR,,}" in
+  corrclip) CORRCLIP=1 ;;
+  *)        CORRCLIP=0 ;;
+esac
+
+RESULT_FLAG=""
+RUN_NOTE="auto (run_N under experiment folder)"
+if [ -n "$RESULT_RUN" ]; then
+  RESULT_DIR="${PROJ_DIR}/results/Replica/${SCENE}/${EXP}/${RESULT_RUN}"
+  mkdir -p "$RESULT_DIR"
+  RESULT_FLAG="--result_dir ${RESULT_DIR}"
+  RUN_NOTE="${RESULT_DIR}"
+fi
 
 echo "=============================================="
 echo "  Scene      : $SCENE"
@@ -37,8 +56,9 @@ echo "  Config     : configs/Replica/${SCENE}/${EXP}.py"
 echo "  Seed       : $SEED"
 echo "  Visualize  : $ENABLE_VIS"
 echo "  Debug      : $DEBUG"
-echo "  CorrCLIP   : OFF (--corrclip 0)"
-echo "  Run dir    : auto (run_N under experiment folder)"
+echo "  CorrCLIP   : $([ "$CORRCLIP" = 1 ] && echo ON || echo OFF) (--corrclip ${CORRCLIP})"
+echo "  Run dir    : $RUN_NOTE"
+echo "  CUDA_VISIBLE_DEVICES : ${CUDA_VISIBLE_DEVICES}"
 echo "=============================================="
 
 DEBUG_FLAG=""
@@ -48,7 +68,8 @@ python src/main/activesgm.py \
     --cfg        "configs/Replica/${SCENE}/${EXP}.py" \
     --seed       "$SEED" \
     --enable_vis "$ENABLE_VIS" \
-    --corrclip   0 \
+    --corrclip   "$CORRCLIP" \
+    $RESULT_FLAG \
     $DEBUG_FLAG
 
 echo ""

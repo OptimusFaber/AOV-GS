@@ -124,12 +124,13 @@ if __name__ == "__main__":
             os.path.join(main_cfg.dirs.result_dir, "segmentframes")
             if getattr(args, 'debug', False) else None
         )
+        _sam_clip_device = os.getenv("SAM_CLIP_DEVICE") or getattr(sam_clip_cfg, 'device', 'cuda:1')
         sam_clip_extractor = SAMCLIPExtractor(
             save_dir            = _lang_feat_dir,
             sam_ckpt_path       = getattr(sam_clip_cfg, 'sam_ckpt_path', 'ckpts/sam_vit_h_4b8939.pth'),
             clip_model          = getattr(sam_clip_cfg, 'clip_model', 'ViT-B-32'),
             clip_pretrained     = getattr(sam_clip_cfg, 'clip_pretrained', 'openai'),
-            device              = getattr(sam_clip_cfg, 'device', 'cuda:1'),
+            device              = _sam_clip_device,
             queue_size          = getattr(sam_clip_cfg, 'queue_size', 8),
             submit_timeout_s    = getattr(sam_clip_cfg, 'submit_timeout_s', 1.0),
             bbox_pad_px         = getattr(sam_clip_cfg, 'bbox_pad_px', 20),
