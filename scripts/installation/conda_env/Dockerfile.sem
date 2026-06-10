@@ -1,0 +1,153 @@
+FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG MINIFORGE_VERSION=24.11.3-0
+ARG ENV_NAME=active-sgm
+ARG TCNN_CUDA_ARCHITECTURES=75;80;86
+ARG TORCH_CUDA_ARCH_LIST=8.0;8.6
+ARG MAX_JOBS=4
+
+ENV LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    CONDA_DIR=/opt/conda \
+    ENV_NAME=${ENV_NAME} \
+    CUDA_HOME=/usr/local/cuda \
+    CUDA_PATH=/usr/local/cuda \
+    PATH=/opt/conda/envs/${ENV_NAME}/bin:/opt/conda/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    TCNN_CUDA_ARCHITECTURES=${TCNN_CUDA_ARCHITECTURES} \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    MAX_JOBS=${MAX_JOBS} \
+    PIP_DEFAULT_TIMEOUT=1000 \
+    PIP_RETRIES=10 \
+    HF_HOME=/opt/model-cache/hf \
+    TORCH_HOME=/opt/model-cache/torch \
+    XDG_CACHE_HOME=/opt/model-cache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget curl ca-certificates \
+    build-essential cmake ninja-build pkg-config \
+    libgl1-mesa-dev libegl1-mesa-dev libglfw3-dev libglm-dev \
+    libx11-dev libxext-dev libxi-dev libxfixes-dev \
+    libglib2.0-0 libsm6 libxrender1 libgomp1 \
+    python3.8 python3.8-dev python3.8-distutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -qO /tmp/miniforge.sh \
+      "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-Linux-x86_64.sh" \
+    && bash /tmp/miniforge.sh -b -p ${CONDA_DIR} \
+    && rm /tmp/miniforge.sh \
+    && ${CONDA_DIR}/bin/conda config --system --remove-key default_channels 2>/dev/null || true \
+    && ${CONDA_DIR}/bin/conda config --system --add channels conda-forge \
+    && ${CONDA_DIR}/bin/conda create -n ${ENV_NAME} python=3.8 cmake=3.14 pip -y \
+    && ${CONDA_DIR}/bin/conda clean -afy
+
+SHELL ["/bin/bash", "-lc"]
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && pip install --no-cache-dir \
+         torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+         --extra-index-url https://download.pytorch.org/whl/cu117 \
+    && pip install --no-cache-dir \
+         -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu117_pyt1131/download.html \
+         pytorch3d==0.7.3 \
+    && pip install --no-cache-dir torch-scatter==2.1.1 torch-sparse==0.6.17 \
+         -f https://data.pyg.org/whl/torch-1.13.1+cu117.html \
+    && conda install -y -c nvidia -c conda-forge \
+         cuda-nvcc=11.7 cuda-cudart-dev=11.7 cuda-libraries-dev=11.7 cuda-cccl=11.7 \
+    && conda install -y -c conda-forge gcc_linux-64=11 gxx_linux-64=11 libxcrypt \
+    && conda install -y -c nvidia cuda-driver-dev=11.7 \
+    && conda install -y -c conda-forge git ninja \
+         libgl-devel libegl-devel libglvnd \
+         xorg-libx11 xorg-libxext xorg-libxfixes
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && export CC=${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-gcc \
+    && export CXX=${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-g++ \
+    && export LDFLAGS="-L${CONDA_PREFIX}/lib/stubs ${LDFLAGS}" \
+    && export LIBRARY_PATH="${CONDA_PREFIX}/lib/stubs:${LIBRARY_PATH}" \
+    && mkdir -p /opt/third_parties \
+    && if [ ! -d /opt/third_parties/habitat_sim/.git ] \
+         && [ ! -f /opt/third_parties/habitat_sim/setup.py ] \
+         && { [ ! -d /opt/third_parties/habitat_sim ] || [ -z "$(ls -A /opt/third_parties/habitat_sim 2>/dev/null)" ]; }; then \
+         git clone --recursive https://github.com/Huangying-Zhan/habitat-sim.git /opt/third_parties/habitat_sim; \
+       fi \
+    && cd /opt/third_parties/habitat_sim \
+    && pip install --no-cache-dir -r requirements.txt \
+    && python setup.py install --headless --bullet
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && export CC=${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-gcc \
+    && export CXX=${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-g++ \
+    && if [[ -d "${CONDA_PREFIX}/compiler_compat" ]]; then \
+         mv "${CONDA_PREFIX}/compiler_compat" "${CONDA_PREFIX}/.__compiler_compat_bak__"; \
+       fi \
+    && pip install --no-cache-dir -v --no-build-isolation \
+         git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch \
+    && pip install --no-cache-dir -v --no-build-isolation \
+         git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110 \
+    && if [[ -d "${CONDA_PREFIX}/.__compiler_compat_bak__" ]]; then \
+         mv "${CONDA_PREFIX}/.__compiler_compat_bak__" "${CONDA_PREFIX}/compiler_compat"; \
+       fi
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && pip install --no-cache-dir \
+         opencv-python-headless open3d tensorboardX mmengine trimesh plyfile wandb \
+         pytorch-msssim lpips torchmetrics kornia transformers accelerate safetensors \
+         filelock huggingface-hub regex tokenizers natsort PyMCubes==0.1.4 imgviz psutil \
+         hf-xet fsspec timm pillow open_clip_torch \
+    && pip install --no-cache-dir --no-build-isolation \
+         git+https://github.com/facebookresearch/segment-anything.git
+
+RUN mkdir -p /opt/models/sam /opt/model-cache \
+    && curl -fL --retry 8 --retry-delay 5 \
+         "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth" \
+         -o /opt/models/sam/sam_vit_b_01ec64.pth
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && python - <<'PY'
+import open_clip
+models_to_warm = [
+    ("ViT-B-16", "laion2b_s34b_b88k"),
+    ("ViT-B-32", "openai"),
+]
+for model_name, pretrained in models_to_warm:
+    open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+print("OpenCLIP cache warmup complete")
+PY
+
+RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
+    && conda activate ${ENV_NAME} \
+    && python - <<'PY'
+import os
+import importlib
+mods = [
+    "torch",
+    "pytorch3d",
+    "torch_scatter",
+    "torch_sparse",
+    "habitat_sim",
+    "tinycudann",
+    "diff_gaussian_rasterization",
+    "segment_anything",
+    "open_clip",
+]
+for m in mods:
+    importlib.import_module(m)
+sam_path = "/opt/models/sam/sam_vit_b_01ec64.pth"
+if not os.path.exists(sam_path):
+    raise RuntimeError(f"Missing SAM weights: {sam_path}")
+print("smoke test passed")
+PY
+
+WORKDIR /workspace/AOV-GS
+
+# This image intentionally does not copy `data/`.
+# Mount project code/data at runtime if needed.
+
+CMD ["/bin/bash"]
