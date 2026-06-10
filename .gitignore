@@ -3,8 +3,15 @@
 .DS_Store
 **/.DS_Store
 /data/checkpoint/
-# Large vendored trees + nested .git; copy from ActiveSGM or `git submodule update` per .gitmodules
-/third_parties/
+# third_parties: tracked via git submodules (see setup_third_parties.sh); exclude local builds only
+/third_parties/habitat_sim/
+third_parties/**/build/
+third_parties/**/dist/
+third_parties/**/__pycache__/
+third_parties/**/*.egg-info/
+third_parties/**/*.so
+third_parties/**/.ninja_log
+third_parties/**/compile_commands.json
 *.bin
 *.pth
 /results*/
