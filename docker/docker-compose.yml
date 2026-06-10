@@ -1,0 +1,36 @@
+# Usage (from AOV-GS repo root):
+#   docker compose -f docker/docker-compose.yml build
+#   docker compose -f docker/docker-compose.yml run --rm aov-gs bash
+#
+# With proxy at build time:
+#   HTTP_PROXY=http://user:pass@host:3128 HTTPS_PROXY=http://user:pass@host:3128 \
+#     docker compose -f docker/docker-compose.yml build
+
+services:
+  aov-gs:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        BUILD_ACTIVESEM: ${BUILD_ACTIVESEM:-1}
+    image: aov-gs:cuda117
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+    volumes:
+      - ..:/workspace/AOV-GS
+      - aov-gs-data:/workspace/AOV-GS/data
+      - aov-gs-results:/workspace/AOV-GS/results
+      - aov-gs-ckpts:/workspace/AOV-GS/ckpts
+    working_dir: /workspace/AOV-GS
+    shm_size: "16gb"
+    stdin_open: true
+    tty: true
+
+volumes:
+  aov-gs-data:
+  aov-gs-results:
+  aov-gs-ckpts:

@@ -1,0 +1,17 @@
+.git
+.gitmodules
+**/__pycache__
+**/*.pyc
+results
+results/**
+data/**
+!data/benchmarks
+ablation_experiments
+*.log
+nohup.out
+ckpt
+ckpts
+third_parties
+.env
+*.md
+!docker/README.md
