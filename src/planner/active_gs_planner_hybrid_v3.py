@@ -79,7 +79,7 @@ class ActiveGSHybridPlannerv3(ActiveGSPlannerv3):
                 clip_pretrained=sam_cfg.get(
                     "clip_pretrained", "laion2b_s34b_b88k"
                 ),
-                device=sam_cfg.get("device", "cuda:1"),
+                device=sam_cfg.get("device", "cuda:0"),
                 max_masks_per_candidate=sem_cfg.get(
                     "max_masks_per_candidate", 40
                 ),

@@ -295,7 +295,7 @@ class SAMCLIPExtractor:
         sam_ckpt_path: str,
         clip_model: str = "ViT-B-16",
         clip_pretrained: str = "laion2b_s34b_b88k",
-        device: str = "cuda:1",
+        device: str = "cuda:0",
         queue_size: int = 64,
         submit_timeout_s: float = 1.0,
         bbox_pad_px: int = 20,
