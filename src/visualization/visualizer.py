@@ -29,7 +29,7 @@ import numpy as np
 import torch
 from typing import Union
 
-
+from src.utils.display_utils import has_gui_display
 from src.utils.general_utils import InfoPrinter
 
 from third_parties.coslam.utils import colormap_image
@@ -100,7 +100,8 @@ class Visualizer():
         ### return visualization ###
         if return_vis:
             return image
-        else:
+        if has_gui_display():
             cv2.namedWindow('RGB-D', cv2.WINDOW_AUTOSIZE)
             cv2.imshow('RGB-D', image)
-            key = cv2.waitKey(1)
+            cv2.waitKey(1)
+        return None

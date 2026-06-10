@@ -34,6 +34,7 @@ from src.planner.active_lang_planner import ActiveLangPlanner
 from src.slam.splatam.splatam import SplatamOurs as Splatam
 
 from src.visualization.visualizer import Visualizer
+from src.utils.display_utils import has_gui_display
 from src.utils.general_utils import InfoPrinter, create_class_colormap, apply_colormap
 
 from typing import Union
@@ -273,10 +274,11 @@ class ActiveLangVisualizer(Visualizer):
         ### return visualization ###
         if return_vis:
             return image
-        else:
+        if has_gui_display():
             cv2.namedWindow('RGB-D', cv2.WINDOW_AUTOSIZE)
             cv2.imshow('RGB-D', image)
-            key = cv2.waitKey(1)
+            cv2.waitKey(1)
+        return None
 
     def visualize_semantic(self,
                            gt_semantic: torch.Tensor,
@@ -304,9 +306,10 @@ class ActiveLangVisualizer(Visualizer):
         gt_rgb = cv2.resize(gt_rgb, (vis_size, vis_size))
         pred_rgb = cv2.resize(pred_rgb, (vis_size, vis_size))
         image = np.hstack((gt_rgb, pred_rgb))
-        cv2.namedWindow('Semantic (GT | Pred)', cv2.WINDOW_AUTOSIZE)
-        cv2.imshow('Semantic (GT | Pred)', image)
-        cv2.waitKey(1)
+        if has_gui_display():
+            cv2.namedWindow('Semantic (GT | Pred)', cv2.WINDOW_AUTOSIZE)
+            cv2.imshow('Semantic (GT | Pred)', image)
+            cv2.waitKey(1)
 
     # def save_igs(self, planner:ActiveLangPlanner):
     #     if planner.state == "planning" and "exploration" in planner.planning_state:
