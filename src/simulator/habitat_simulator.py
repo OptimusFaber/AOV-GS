@@ -29,12 +29,24 @@ import mmengine
 import numpy as np
 import quaternion
 import torch
-from typing import Tuple, Union, Dict
+from pathlib import Path
+from typing import Tuple, Union, Dict, Optional
 
+from src.planner.planner import sanitize_pose_c2w
 from src.layers.erp_conversions import ERPDepth2Dist
 from src.simulator.simulator import Simulator
 from src.simulator.habitat_utils import make_configuration, simulate_objects
 from src.utils.general_utils import InfoPrinter, apply_colormap, create_class_colormap
+
+
+def _load_tonemap_json(path):
+    from src.utils.scannet_tonemap import load_tonemap_json
+    return load_tonemap_json(path)
+
+
+def _tonemap_rgb_float(*args, **kwargs):
+    from src.utils.scannet_tonemap import tonemap_rgb_float
+    return tonemap_rgb_float(*args, **kwargs)
 
 
 class HabitatSim(Simulator):
@@ -65,16 +77,18 @@ class HabitatSim(Simulator):
 
         if disable_erp:
             cfg.camera.equirectangular.enable = False
-        
-        if cfg.camera.equirectangular.enable:
-            pano_hw = tuple(cfg.camera.equirectangular.resolution_hw)
-            self.erp_depth_to_erp_dist = ERPDepth2Dist(512, pano_hw, 'cuda') 
-        
+
         if disable_pinhole:
             cfg.camera.pinhole.enable = False
-        
+
+        # Habitat EGL must init before any torch.cuda use (else OpenGL 3.0 / PTex fails in Docker).
         sim_cfg = make_configuration(cfg)
         sim = habitat_sim.Simulator(sim_cfg)
+
+        self.erp_depth_to_erp_dist = None
+        if cfg.camera.equirectangular.enable:
+            pano_hw = tuple(cfg.camera.equirectangular.resolution_hw)
+            self.erp_depth_to_erp_dist = ERPDepth2Dist(512, pano_hw, 'cuda')
         
         if "gravity" in cfg.simulator.physics:
             sim.set_gravity(cfg.simulator.physics.gravity)
@@ -85,6 +99,66 @@ class HabitatSim(Simulator):
         sim_cfg = cfg.simulator
         sim.step_physics(1.0)
         self.sim = sim
+        self._color_tonemap = self._load_color_tonemap_cfg(cfg)
+
+    def _load_color_tonemap_cfg(self, habitat_cfg: mmengine.Config) -> Optional[dict]:
+        tonemap_cfg = habitat_cfg.get("color_tonemap", None)
+        if tonemap_cfg is None or not bool(tonemap_cfg.get("enable", False)):
+            return None
+
+        settings = {
+            "mode": tonemap_cfg.get("mode", "auto_global"),
+            "exposure": float(tonemap_cfg.get("exposure", 2.5)),
+            "gamma": float(tonemap_cfg.get("gamma", 1.0)),
+            "target_median": float(tonemap_cfg.get("target_median", 105.0)),
+            "max_gain": float(tonemap_cfg.get("max_gain", 12.0)),
+            "fixed_gain": tonemap_cfg.get("fixed_gain", None),
+        }
+        if settings["fixed_gain"] is not None:
+            settings["fixed_gain"] = float(settings["fixed_gain"])
+
+        gain_file = tonemap_cfg.get("gain_file", None)
+        if gain_file:
+            gain_path = Path(gain_file)
+            if not gain_path.is_absolute():
+                gain_path = Path.cwd() / gain_path
+            if gain_path.exists():
+                payload = _load_tonemap_json(gain_path)
+                settings["mode"] = payload.get("mode", settings["mode"])
+                settings["fixed_gain"] = float(payload["fixed_gain"])
+                settings["gamma"] = float(payload.get("gamma", settings["gamma"]))
+                settings["target_median"] = float(
+                    payload.get("target_median", settings["target_median"])
+                )
+                settings["max_gain"] = float(payload.get("max_gain", settings["max_gain"]))
+        return settings
+
+    def _apply_color_tonemap(
+        self,
+        color: Union[torch.Tensor, None],
+        depth: Union[torch.Tensor, None],
+    ) -> Union[torch.Tensor, None]:
+        if self._color_tonemap is None or color is None:
+            return color
+
+        rgb_np = color.detach().cpu().numpy() if isinstance(color, torch.Tensor) else np.asarray(color)
+        depth_np = None
+        if depth is not None:
+            depth_np = depth.detach().cpu().numpy() if isinstance(depth, torch.Tensor) else np.asarray(depth)
+
+        out, gain = _tonemap_rgb_float(
+            rgb_np,
+            depth_m=depth_np,
+            mode=self._color_tonemap["mode"],
+            exposure=self._color_tonemap["exposure"],
+            gamma=self._color_tonemap["gamma"],
+            target_median=self._color_tonemap["target_median"],
+            max_gain=self._color_tonemap["max_gain"],
+            fixed_gain=self._color_tonemap.get("fixed_gain"),
+        )
+        if self._color_tonemap.get("fixed_gain") is None:
+            self._color_tonemap["fixed_gain"] = gain
+        return torch.from_numpy(out)
 
     def _flip_tensor_hw(self, x: Union[torch.Tensor, None]) -> Union[torch.Tensor, None]:
         if x is None or not self._pinhole_vertical_flip:
@@ -169,6 +243,7 @@ class HabitatSim(Simulator):
             seman = torch.from_numpy(seman.astype(np.float32))
 
         color, depth, seman = self._normalize_pinhole_observation(color, depth, seman)
+        color = self._apply_color_tonemap(color, depth)
 
         if return_erp:
             erp_color = obs.get('erp_color', None)
@@ -336,6 +411,10 @@ class HabitatSimV2(HabitatSim):
             self.info_printer(f"Simulating at position [{c2w[0, 3]:.3f}, {c2w[1, 3]:.3f}, {c2w[2, 3]:.3f}]",
                               self.step, self.__class__.__name__)
         ### simulate agent motion ###
+        c2w = np.asarray(c2w, dtype=np.float64)
+        last_valid = getattr(self, "_last_valid_c2w", np.eye(4, dtype=np.float64))
+        c2w = sanitize_pose_c2w(c2w, fallback=last_valid)
+        self._last_valid_c2w = c2w.copy()
         next_state = habitat_sim.agent.AgentState()
 
         qut = quaternion.from_rotation_matrix(c2w[:3, :3])
@@ -370,6 +449,7 @@ class HabitatSimV2(HabitatSim):
             seman = torch.from_numpy(seman.astype(np.float32))
 
         color, depth, seman = self._normalize_pinhole_observation(color, depth, seman)
+        color = self._apply_color_tonemap(color, depth)
 
         if return_erp:
             erp_color = obs.get('erp_color', None)

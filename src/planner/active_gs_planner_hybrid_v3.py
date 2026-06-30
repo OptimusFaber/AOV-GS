@@ -79,12 +79,17 @@ class ActiveGSHybridPlannerv3(ActiveGSPlannerv3):
                 clip_pretrained=sam_cfg.get(
                     "clip_pretrained", "laion2b_s34b_b88k"
                 ),
-                device=sam_cfg.get("device", "cuda:0"),
+                device=sam_cfg.get("device", "cuda:1"),
                 max_masks_per_candidate=sem_cfg.get(
                     "max_masks_per_candidate", 40
                 ),
                 novelty_aggregation=sem_cfg.get("novelty_aggregation", "mean"),
                 min_bank_masks=sem_cfg.get("min_bank_masks", 1),
+                sam_points_per_side=sem_cfg.get("sam_points_per_side", 32),
+                sam_crop_n_layers=sem_cfg.get("sam_crop_n_layers", 1),
+                sam_crop_n_points_downscale_factor=sem_cfg.get(
+                    "sam_crop_n_points_downscale_factor", 1
+                ),
                 **corrclip,
             )
             self._sem_scorer.encode_keyframes_if_missing = sem_cfg.get(

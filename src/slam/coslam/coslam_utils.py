@@ -23,7 +23,7 @@ SOFTWARE.
 """
 
 
-import marching_cubes as mcubes
+import mcubes
 import matplotlib.pyplot as plt
 import numpy as np
 import os

@@ -31,7 +31,11 @@ import torch
 import torch.nn.functional as F
 from typing import Dict, List, Tuple
 
-from src.planner.planner import compute_camera_pose
+from src.planner.planner import (
+    build_path_poses_look_at_goal,
+    compute_camera_pose,
+    sanitize_pose_c2w,
+)
 from src.planner.naruto_planner import NarutoPlanner
 from src.planner.astar import path_planning as astar_planner
 from src.utils.general_utils import InfoPrinter
@@ -113,16 +117,80 @@ class ActiveGSPlanner(NarutoPlanner):
         self.num_dir_samples = self.planner_cfg.num_dir_samples
         self.view_rot_samples = []
         self.view_rot_idx = []
+        _up = torch.tensor(self.planner_cfg.up_dir).to(self.device).float()
         for i in range(self.num_exploration_stage):
-            self.view_rot_samples.append(self.generate_rotation_samples(
-                torch.tensor(self.planner_cfg.up_dir).to(self.device).float(),
-                self.num_dir_samples[i],
-            )) # 1, K, 4, 4
-            self.view_rot_idx.append(torch.range(0, self.num_dir_samples[i]-1).unsqueeze(0).unsqueeze(2).to(self.device))
+            self.view_rot_samples.append(
+                self.generate_rotation_samples(_up, self.num_dir_samples[i])
+            )
+            self.view_rot_idx.append(
+                torch.range(0, self.num_dir_samples[i] - 1).unsqueeze(0).unsqueeze(2).to(self.device)
+            )
 
     def use_semantic_exploration(self) -> bool:
         """Override in hybrid planner to mix geometry with SAM+CLIP novelty."""
         return False
+
+    def _horizon_level_poses_enabled(self) -> bool:
+        """ScanNet-only: level exploration camera roll/pitch (Z-up Habitat)."""
+        if getattr(self.main_cfg.general, "dataset", None) != "ScanNet":
+            return False
+        return bool(self.planner_cfg.get("horizon_level_poses", False))
+
+    def _horizon_R_init(self) -> np.ndarray:
+        if hasattr(self, "c2w_slam_init") and self.c2w_slam_init is not None:
+            return self.c2w_slam_init[:3, :3].detach().cpu().numpy()
+        return np.eye(3, dtype=np.float64)
+
+    def _rebuild_horizon_view_samples(self) -> None:
+        if not self._horizon_level_poses_enabled():
+            return
+        # Yaw-only samples around world up (ScanNet Z-up). Full-sphere samples
+        # collapse to the same pose after horizon lock, wasting explore pool slots.
+        self.view_rot_samples = []
+        _up = torch.tensor(self.planner_cfg.up_dir).to(self.device).float()
+        for i in range(self.num_exploration_stage):
+            self.view_rot_samples.append(
+                self.generate_horizontal_rotation_samples(_up, self.num_dir_samples[i])
+            )
+
+    def _horizon_lock_relative_pose(self, pose: torch.Tensor) -> torch.Tensor:
+        """Keep translation; level roll/pitch to start pose while preserving yaw."""
+        out = pose.clone()
+        down = torch.tensor(
+            self._horizon_R_init()[:, 1], device=pose.device, dtype=pose.dtype
+        )
+        down = down / torch.linalg.norm(down).clamp(min=1e-6)
+        fwd = pose[:3, 2]
+        fwd = fwd - torch.dot(fwd, down) * down
+        fwd_norm = torch.linalg.norm(fwd)
+        if float(fwd_norm) < 1e-6:
+            out[:3, :3] = torch.eye(3, device=pose.device, dtype=pose.dtype)
+            return out
+        fwd = fwd / fwd_norm
+        right = torch.cross(down, fwd, dim=0)
+        right = right / torch.linalg.norm(right).clamp(min=1e-6)
+        fwd = torch.cross(right, down, dim=0)
+        fwd = fwd / torch.linalg.norm(fwd).clamp(min=1e-6)
+        out[:3, :3] = torch.stack([right, down, fwd], dim=1)
+        return out
+
+    def _apply_horizon_level_pose(self, pose):
+        if not self._horizon_level_poses_enabled():
+            return pose
+        if isinstance(pose, torch.Tensor):
+            return self._horizon_lock_relative_pose(pose)
+        p = torch.from_numpy(np.asarray(pose, dtype=np.float32))
+        return self._horizon_lock_relative_pose(p).cpu().numpy()
+
+    def _sanitize_pose(self, pose, fallback):
+        """Return a finite c2w pose with orthonormal rotation."""
+        if isinstance(pose, torch.Tensor):
+            pose_np = pose.detach().cpu().numpy()
+            fb_np = fallback.detach().cpu().numpy() if isinstance(fallback, torch.Tensor) else np.asarray(fallback)
+            out_np = sanitize_pose_c2w(pose_np, fallback=fb_np)
+            return torch.from_numpy(out_np).to(device=pose.device, dtype=pose.dtype)
+        fb_np = fallback.detach().cpu().numpy() if isinstance(fallback, torch.Tensor) else np.asarray(fallback)
+        return sanitize_pose_c2w(np.asarray(pose), fallback=fb_np)
 
     def score_exploration_semantics(
         self,
@@ -327,6 +395,7 @@ class ActiveGSPlanner(NarutoPlanner):
 
         up_dir_sim = torch.tensor(self.planner_cfg.up_dir).float().to(self.sim2slam.device).unsqueeze(1)
         self.up_dir_slam = (self.sim2slam[:3, :3] @ up_dir_sim)[:, 0].cpu().numpy()
+        self._rebuild_horizon_view_samples()
 
 
         ### bounding box ###
@@ -701,16 +770,34 @@ class ActiveGSPlanner(NarutoPlanner):
         ### rotation planning ###
         path = [i.detach().cpu().numpy() for i in path]
         path = remove_consecutive_duplicates(path)
-        
-        # gravity_dir = self.up_dir_slam.copy()
-        new_path = smoothen_trajectory(
-            start_pose.detach().cpu().numpy(), 
-            end_pose.detach().cpu().numpy(), 
-            path, 
-            rot_step, 
-            -self.up_dir_slam
+
+        start_np = start_pose.detach().cpu().numpy()
+        end_np = end_pose.detach().cpu().numpy()
+        if self._horizon_level_poses_enabled():
+            positions_only = []
+            for wp in path:
+                wp_np = np.asarray(wp, dtype=np.float64)
+                if wp_np.shape == (4, 4):
+                    positions_only.append(wp_np[:3, 3])
+                else:
+                    positions_only.append(wp_np.reshape(3))
+            new_path = build_path_poses_look_at_goal(end_np, positions_only, self._horizon_R_init())
+        else:
+            new_path = smoothen_trajectory(
+                start_np,
+                end_np,
+                path,
+                rot_step,
+                -self.up_dir_slam,
             )
-        new_path = [i for i in new_path]
+            new_path = [i for i in new_path]
+        prev_pose = start_np
+        sanitized_path = []
+        for pose in new_path:
+            safe_pose = sanitize_pose_c2w(pose, fallback=prev_pose)
+            sanitized_path.append(safe_pose)
+            prev_pose = safe_pose
+        new_path = sanitized_path
         return new_path
 
     def compute_next_state_pose(self, 
@@ -774,16 +861,8 @@ class ActiveGSPlanner(NarutoPlanner):
         ### moving to goal 
         ##################################################
         elif self.state == "movingToGoal":
-            # ### FIXME: add local path planner's path ###
-            # next_loc = self.path[0].detach().cpu().numpy()
-            # if len(self.path) == 1:
-            #     new_pose = cur_pose.clone()
-            #     new_pose[:3, 3] = self.goal_pose[:3, 3]
-            # else:
-            #     new_pose = self.moving_to_goal(cur_pose.detach().cpu().numpy(), self.lookat_tgts[0], next_loc, self.up_dir_slam)
-            # self.path.pop(0)
-
             new_pose = self.path.pop(0)
+            new_pose = self._apply_horizon_level_pose(new_pose)
             
         ##################################################
         ### rotation planning at goal location
@@ -815,6 +894,7 @@ class ActiveGSPlanner(NarutoPlanner):
         elif self.state == "stay":
             new_pose = cur_pose.clone()
 
+        new_pose = self._sanitize_pose(new_pose, cur_pose)
         return new_pose
 
     def generate_rotation_samples(self, 
@@ -863,6 +943,42 @@ class ActiveGSPlanner(NarutoPlanner):
         
         ### Set the bottom row to [0, 0, 0, 1] for homogeneous coordinates ###
         transformations[:, :, 3, 3] = 1
+        return transformations
+
+    def generate_horizontal_rotation_samples(
+        self,
+        up: torch.Tensor,
+        K: int = 10,
+    ) -> torch.Tensor:
+        """Yaw-only viewing directions in the plane perpendicular to ``up`` (ScanNet / Z-up)."""
+        up = F.normalize(up.float(), dim=0)
+        ref = torch.cross(
+            up,
+            torch.tensor([0.0, 0.0, 1.0], device=up.device, dtype=up.dtype),
+        )
+        if torch.linalg.norm(ref) < 1e-6:
+            ref = torch.cross(
+                up,
+                torch.tensor([0.0, 1.0, 0.0], device=up.device, dtype=up.dtype),
+            )
+        ref = F.normalize(ref, dim=0)
+        tangent = F.normalize(torch.cross(up, ref), dim=0)
+
+        indices = torch.arange(0, K, dtype=torch.float32, device=up.device)
+        theta = 2.0 * math.pi * indices / max(K, 1)
+        directions = (
+            torch.cos(theta).unsqueeze(1) * ref.unsqueeze(0)
+            + torch.sin(theta).unsqueeze(1) * tangent.unsqueeze(0)
+        )
+
+        transformations = torch.zeros((1, K, 4, 4), device=up.device, dtype=up.dtype)
+        forward = -directions.unsqueeze(0)
+        up_exp = up.view(1, 1, 3).expand(1, K, 3)
+        right = torch.cross(up_exp, forward, dim=2)
+        right = right / right.norm(dim=2, keepdim=True).clamp(min=1e-9)
+        true_up = torch.cross(forward, right, dim=2)
+        transformations[:, :, :3, :3] = torch.stack((right, true_up, forward), dim=3)
+        transformations[:, :, 3, 3] = 1.0
         return transformations
 
     def generate_candidate_poses(self, 
@@ -1227,8 +1343,9 @@ class ActiveGSPlanner(NarutoPlanner):
                 dists = torch.norm(cand_poses[:, :3, 3] - cur_pose[:3, 3], dim=1) + 1e-6 # avoid zero dist case
                 dists_sm = torch.nn.functional.softmax(dists, dim=0)
                 for i, cand_pose in enumerate(cand_poses):
+                    eval_pose = self._apply_horizon_level_pose(cand_pose)
                     ### render data from candidate pose ###
-                    _r = gs_slam.render(cand_pose)
+                    _r = gs_slam.render(eval_pose)
                     img, depth, valid_mask = _r[0], _r[1], _r[2]
 
                     ##################################################
@@ -1236,7 +1353,10 @@ class ActiveGSPlanner(NarutoPlanner):
                     # FIXME: this simulation is time consuming.
                     # However, it is not related to our method but the imperfect simulation data.
                     ##################################################
-                    depth_gt = self.sim.simulate(self.pose_conversion_slam2sim(cand_pose).detach().cpu().numpy(), no_print=True)['depth']
+                    depth_gt = self.sim.simulate(
+                        self.pose_conversion_slam2sim(eval_pose).detach().cpu().numpy(),
+                        no_print=True
+                    )['depth']
                     valid_sim_mask = depth_gt > 0.2 # 0.0 / 0.2 is the value that ignore rendering
                     valid_mask[0][~valid_sim_mask] = True
 
@@ -1252,6 +1372,7 @@ class ActiveGSPlanner(NarutoPlanner):
                 new_pose = self.select_exploration_pose(
                     cand_poses, explore_igs_sm, dists_sm, gs_slam
                 )
+                new_pose = self._apply_horizon_level_pose(new_pose)
                 # print("Best pose px num: ", explore_igs[torch.argmax(weighted_explore_igs)])
 
                 ### update explore pool ###
@@ -1287,7 +1408,8 @@ class ActiveGSPlanner(NarutoPlanner):
             dists = torch.norm(cand_poses[:, :3, 3] - cur_pose[:3, 3], dim=1) + 1e-6 # avoid zero dist case
             dists_sm = torch.nn.functional.softmax(dists, dim=0)
             for i, cand_pose in enumerate(cand_poses):
-                _r = gs_slam.render(cand_pose)
+                eval_pose = self._apply_horizon_level_pose(cand_pose)
+                _r = gs_slam.render(eval_pose)
                 color, depth, valid_mask = _r[0], _r[1], _r[2]
 
                 ### compute REFINE I.G. ###
@@ -1309,6 +1431,7 @@ class ActiveGSPlanner(NarutoPlanner):
             # new_pose = cand_poses[torch.argmax(weighted_refine_igs)]
             best_key = torch.argmax(refine_igs)
             new_pose = cand_poses[best_key]
+            new_pose = self._apply_horizon_level_pose(new_pose)
 
             ### remove refined views from REFINE_POOL ###
             self.del_refine_pool_cand(

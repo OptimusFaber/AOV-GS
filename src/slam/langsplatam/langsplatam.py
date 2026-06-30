@@ -10,6 +10,15 @@ The class:
      — no optional CUDA extension required.
   4. Optimises ``lang_feats`` against per-frame CLIP-encoded target maps.
 
+Rendering (geometry, SplaTAM-AOV ``eval`` convention)
+------------------------------------------------------
+Feature / base-GS rasterisation matches ``src/slam/splatam/eval_helper.eval``:
+Gaussians are transformed with ``rel_w2c = gt_w2c(view k)``, while the
+rasteriser camera projection uses **checkpoint** ``intrinsics`` and
+``first_frame_w2c`` (frame-0 projector), **not** the view ``w2c``.
+This differs from naive one-matrix setups (camera and Gaussians share the same
+``w2c``), where NVS previews would drift from ``rendered_rgb/gs_*.png``.
+
 Rendering (any latent_dim)
 ----------------------------
 The bundled RGB rasteriser outputs 3 channels.  For D-dimensional language
@@ -70,14 +79,12 @@ def _build_rendervar_lang(params: Dict, transformed: Dict, lang_feats: torch.Ten
         'rotations': F.normalize(transformed['unnorm_rotations']),
         'opacities': torch.sigmoid(params['logit_opacities']),
         'scales': torch.exp(log_scales),
-        'means2D': torch.zeros_like(
-            params['means3D'], requires_grad=True, device=params['means3D'].device
-        ) + 0,
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0,
     }
 
 
-def _load_checkpoint(npz_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
-    """Load ``params*.npz`` → dict of float tensors on ``device``."""
+def _load_checkpoint(npz_path: str) -> Dict[str, torch.Tensor]:
+    """Load ``params*.npz`` → dict of CUDA float tensors."""
     raw = dict(np.load(npz_path, allow_pickle=True))
     params = {}
     skip_keys = {'gt_w2c_all_frames', 'keyframe_time_indices',
@@ -88,7 +95,7 @@ def _load_checkpoint(npz_path: str, device: torch.device) -> Dict[str, torch.Ten
             params[k] = v  # keep as numpy
         else:
             try:
-                params[k] = torch.tensor(v, device=device, dtype=torch.float32)
+                params[k] = torch.tensor(v).cuda().float()
             except Exception:
                 params[k] = v
     return params
@@ -133,8 +140,6 @@ class LangSplatam:
         topk: int = 4,
     ) -> None:
         self.device = torch.device(device)
-        if self.device.type == "cuda":
-            torch.cuda.set_device(self.device)
         self.latent_dim = latent_dim
         self.checkpoint_path = checkpoint_path
         self.vq_layer_num = int(vq_layer_num)
@@ -147,8 +152,8 @@ class LangSplatam:
             raise ValueError("render_checkpoint must be 'auto', 'on', or 'off'")
         self._render_checkpoint_mode = render_checkpoint
 
-        # Load frozen GS params (all tensors on self.device)
-        self.params = _load_checkpoint(checkpoint_path, self.device)
+        # Load frozen GS params
+        self.params = _load_checkpoint(checkpoint_path)
         self._freeze_base_params()
 
         # Camera intrinsics (read from checkpoint)
@@ -345,25 +350,8 @@ class LangSplatam:
             out = out + wl @ Cl
         return out
 
-    def _camera_to_device(self, cam, device: torch.device):
-        """Move rasterizer camera tensors to ``device`` (legacy setup_camera)."""
-        device = torch.device(device)
-        updates = {}
-        for attr in ("viewmatrix", "projmatrix", "campos", "bg"):
-            val = getattr(cam, attr, None)
-            if isinstance(val, torch.Tensor):
-                updates[attr] = val.to(device)
-        if not updates:
-            return cam
-        try:
-            return cam._replace(**updates)
-        except AttributeError:
-            for k, v in updates.items():
-                setattr(cam, k, v)
-            return cam
-
     def _setup_camera(self, H: int, W: int, w2c: torch.Tensor):
-        """Build a raster_settings camera object (standard 3-channel renderer)."""
+        """Build SplaTAM raster_settings (``utils.recon_helpers.setup_camera``)."""
         sys.path.insert(0, "third_parties/splatam")
         from utils.recon_helpers import setup_camera as _setup_camera
 
@@ -379,13 +367,7 @@ class LangSplatam:
         intr_np[0, 2] *= sx
         intr_np[1, 2] *= sy
         w2c_np = w2c.detach().cpu().numpy()
-        dev = str(self.device)
-        try:
-            return _setup_camera(W, H, intr_np, w2c_np, device=dev)
-        except TypeError:
-            # Older recon_helpers.py without ``device`` kwarg.
-            cam = _setup_camera(W, H, intr_np, w2c_np)
-            return self._camera_to_device(cam, self.device)
+        return _setup_camera(W, H, intr_np, w2c_np)
 
     def _eval_style_transformed_gaussians(self, gt_w2c_k: torch.Tensor) -> Dict:
         """
@@ -397,6 +379,7 @@ class LangSplatam:
         from src.slam.splatam.eval_helper import transform_to_frame as splat_eval_t2f
 
         m = gt_w2c_k.to(device=self.device, dtype=torch.float32)
+        # time_idx unused when ``rel_w2c`` is set; kept for API parity with eval().
         return splat_eval_t2f(self.params, 0, False, False, rel_w2c=m)
 
     def _transform_gaussians(self, w2c_rel: torch.Tensor) -> Dict:
@@ -510,7 +493,9 @@ class LangSplatam:
 
         Parameters
         ----------
-        w2c_rel : [4, 4]  world-to-camera transform (relative to first frame)
+        w2c_rel : [4, 4]
+            Dataset / NVS ``gt_w2c`` used to move Gaussians into camera *k*.
+            Raster projection stays at checkpoint ``first_frame_w2c`` (SplaTAM-AOV eval).
         H, W    : image resolution
 
         Returns
@@ -632,64 +617,50 @@ class LangSplatam:
         total = lambda_l1 * l1 + lambda_cos * cos_loss
         return total, l1, cos_loss
 
-    def _make_lang_field_payload(
+    def _serialize_lang_field_v2(
         self,
         level: str,
-        use_langsplat_v2: bool,
+        logits_cpu: torch.Tensor,
+        codebooks_cpu: torch.Tensor,
         *,
-        logits: Optional[torch.Tensor] = None,
-        codebooks: Optional[torch.Tensor] = None,
-        lang_feats: Optional[torch.Tensor] = None,
-        extra: Optional[Dict] = None,
-    ) -> Dict:
-        """Build a ``lang_field.pt`` / ``best.pt`` checkpoint dict."""
-        if use_langsplat_v2:
-            if logits is None or codebooks is None:
-                assert self.language_feature_logits is not None
-                assert self.language_feature_codebooks is not None
-                logits = self.language_feature_logits.detach().cpu()
-                codebooks = self.language_feature_codebooks.detach().cpu()
-            else:
-                logits = logits.detach().cpu()
-                codebooks = codebooks.detach().cpu()
-            payload: Dict = {
-                "format": "langsplatv2",
-                "language_feature_logits": logits,
-                "language_feature_codebooks": codebooks,
-                "vq_layer_num": self.vq_layer_num,
-                "codebook_size": self.codebook_size,
-                "topk": self.topk,
-                "latent_dim": self.vq_layer_num * self.codebook_size,
-                "checkpoint_path": self.checkpoint_path,
-                "level": level,
-            }
-        else:
-            if lang_feats is None:
-                lang_feats = self.lang_feats.detach().cpu()
-            else:
-                lang_feats = lang_feats.detach().cpu()
-            payload = {
-                "format": "legacy",
-                "lang_feats": lang_feats,
-                "latent_dim": self.latent_dim,
-                "checkpoint_path": self.checkpoint_path,
-                "level": level,
-            }
-        if extra:
-            payload.update(extra)
+        best_avg_loss: Optional[float] = None,
+        best_iteration: Optional[int] = None,
+    ) -> dict:
+        payload: dict = {
+            "format": "langsplatv2",
+            "language_feature_logits": logits_cpu,
+            "language_feature_codebooks": codebooks_cpu,
+            "vq_layer_num": self.vq_layer_num,
+            "codebook_size": self.codebook_size,
+            "topk": self.topk,
+            "latent_dim": self.vq_layer_num * self.codebook_size,
+            "checkpoint_path": self.checkpoint_path,
+            "level": level,
+        }
+        if best_avg_loss is not None and best_iteration is not None:
+            payload["best_avg_loss"] = float(best_avg_loss)
+            payload["best_iteration"] = int(best_iteration)
         return payload
 
-    def _save_lang_field_checkpoint(
+    def _serialize_lang_field_legacy(
         self,
-        path: Path,
         level: str,
-        use_langsplat_v2: bool,
-        **tensor_kwargs,
-    ) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = self._make_lang_field_payload(level, use_langsplat_v2, **tensor_kwargs)
-        torch.save(payload, str(path))
+        lang_feats_cpu: torch.Tensor,
+        *,
+        best_avg_loss: Optional[float] = None,
+        best_iteration: Optional[int] = None,
+    ) -> dict:
+        payload: dict = {
+            "format": "legacy",
+            "lang_feats": lang_feats_cpu,
+            "latent_dim": self.latent_dim,
+            "checkpoint_path": self.checkpoint_path,
+            "level": level,
+        }
+        if best_avg_loss is not None and best_iteration is not None:
+            payload["best_avg_loss"] = float(best_avg_loss)
+            payload["best_iteration"] = int(best_iteration)
+        return payload
 
     # ------------------------------------------------------------------
     # Main training loop
@@ -711,8 +682,6 @@ class LangSplatam:
         train_downscale: float = 1.0,
     ) -> None:
         """Train language field in legacy or LangSplatV2 mode."""
-        if self.device.type == "cuda":
-            torch.cuda.set_device(self.device)
         # ----- Load poses -----
         with open(str(poses_file), 'r') as f:
             poses_raw = json.load(f)
@@ -803,6 +772,10 @@ class LangSplatam:
                     "iter\ttotal\tl1\tcos\tlr\tlambda_l1\tlambda_cos\n"
                 )
             logger.info("Loss log → %s", loss_log_path)
+            logger.info(
+                "best.pt is written whenever the %d-iter rolling avg improves (same cadence as logging).",
+                log_every,
+            )
 
         # ----- Training loop -----
         import random
@@ -813,7 +786,9 @@ class LangSplatam:
         # Best-checkpoint tracking.
         # The per-iteration loss has high variance (one random frame per step),
         # so the last iterate is often not the best one.  We track the smoothed
-        # loss over the last `log_every` iterations and save whenever it improves.
+        # loss over the last `log_every` iterations; on improvement we refresh
+        # ``best_lang_feats`` and write ``best.pt`` under ``output_dir`` (same schema
+        # as ``lang_field.pt`` plus ``best_avg_loss`` / ``best_iteration``).
         best_avg_loss: float = float("inf")
         best_lang_feats = None
 
@@ -890,28 +865,29 @@ class LangSplatam:
                     if output_dir is not None:
                         best_path = Path(output_dir) / "best.pt"
                         if use_langsplat_v2:
+                            assert best_lang_feats is not None
                             bl, bc = best_lang_feats
-                            self._save_lang_field_checkpoint(
-                                best_path,
+                            b_payload = self._serialize_lang_field_v2(
                                 level,
-                                use_langsplat_v2,
-                                logits=bl,
-                                codebooks=bc,
-                                extra={"best_avg_loss": avg, "best_iter": it},
+                                bl,
+                                bc,
+                                best_avg_loss=best_avg_loss,
+                                best_iteration=it,
                             )
                         else:
-                            self._save_lang_field_checkpoint(
-                                best_path,
+                            assert best_lang_feats is not None
+                            b_payload = self._serialize_lang_field_legacy(
                                 level,
-                                use_langsplat_v2,
-                                lang_feats=best_lang_feats,
-                                extra={"best_avg_loss": avg, "best_iter": it},
+                                best_lang_feats,
+                                best_avg_loss=best_avg_loss,
+                                best_iteration=it,
                             )
+                        torch.save(b_payload, str(best_path))
                         logger.info(
-                            "Best checkpoint → %s (iter %d, avg loss=%.4f)",
+                            "best.pt updated → %s  (rolling avg=%.6f @ iter %d)",
                             best_path,
+                            best_avg_loss,
                             it,
-                            avg,
                         )
 
                 msg = (f"Iter {it:5d}/{num_iters}  "
@@ -942,10 +918,24 @@ class LangSplatam:
                     self.lang_feats.copy_(best_lang_feats.to(self.device))
             logger.info("Restored best language parameters (avg loss=%.4f)", best_avg_loss)
 
-        # ----- Save -----
+        # ----- Save final lang_field.pt (best weights restored above) -----
         if output_dir is not None:
-            save_path = Path(output_dir) / "lang_field.pt"
-            self._save_lang_field_checkpoint(save_path, level, use_langsplat_v2)
+            output_dir = Path(output_dir)
+            save_path = output_dir / "lang_field.pt"
+            if use_langsplat_v2:
+                assert self.language_feature_logits is not None
+                assert self.language_feature_codebooks is not None
+                payload = self._serialize_lang_field_v2(
+                    level,
+                    self.language_feature_logits.detach().cpu(),
+                    self.language_feature_codebooks.detach().cpu(),
+                )
+            else:
+                payload = self._serialize_lang_field_legacy(
+                    level,
+                    self.lang_feats.detach().cpu(),
+                )
+            torch.save(payload, str(save_path))
             logger.info("Language field saved → %s", save_path)
 
     # ------------------------------------------------------------------

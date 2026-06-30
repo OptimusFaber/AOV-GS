@@ -218,26 +218,28 @@ def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configurat
     ### simulator configuration ###
     backend_cfg = habitat_sim.SimulatorConfiguration()
     backend_cfg.scene_id = cfg.simulator.scene_id
+    gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
+    backend_cfg.gpu_device_id = int(gpu_id) if gpu_id.isdigit() else 0
     # Prebuilt conda habitat-sim 0.2.x can crash in PTexMeshShader (geometry shader link).
-    # Force mesh_semantic.ply when env or cfg requests it; stage JSON still exists on disk.
-    # Only honor explicit config to avoid hidden env-dependent behavior.
-    use_mesh_ply = cfg.simulator.get("use_mesh_ply", False)
-    # If a config points directly to mesh_semantic.ply, prefer stage config when available.
-    # Directly using mesh file as scene_id often leads to empty dataset handle and segfaults.
-    if (not use_mesh_ply) and backend_cfg.scene_id.endswith("mesh_semantic.ply"):
-        habitat_dir = os.path.dirname(backend_cfg.scene_id)
-        preferred_stage = os.path.join(habitat_dir, "replicaSDK_stage.stage_config.json")
-        legacy_stage = os.path.join(habitat_dir, "replica_stage.stage_config.json")
-        if os.path.exists(preferred_stage):
-            backend_cfg.scene_id = preferred_stage
-        elif os.path.exists(legacy_stage):
-            backend_cfg.scene_id = legacy_stage
-
+    # Force mesh_semantic.ply when cfg or HABITAT_USE_MESH_PLY=1 (set in Docker entrypoint only).
+    use_mesh_ply = bool(cfg.simulator.get("use_mesh_ply", False))
+    if not use_mesh_ply:
+        use_mesh_ply = os.environ.get("HABITAT_USE_MESH_PLY", "").strip().lower() in (
+            "1", "true", "yes",
+        )
     if use_mesh_ply and "replicaSDK_stage.stage_config.json" in backend_cfg.scene_id:
+        ply_name = os.environ.get("HABITAT_MESH_PLY", "mesh_semantic.ply")
         ply_path = backend_cfg.scene_id.replace(
-            "replicaSDK_stage.stage_config.json", "mesh_semantic.ply"
+            "replicaSDK_stage.stage_config.json", ply_name
         )
         if os.path.exists(ply_path):
+            import warnings
+            warnings.warn(
+                f"habitat: using {ply_name} instead of PTex stage — RGB will NOT match "
+                "native Replica rendering. For generate_replica_habitat use PTex on Titan "
+                "or fix Docker PTex (HABITAT_USE_MESH_PLY=0).",
+                stacklevel=2,
+            )
             backend_cfg.scene_id = ply_path
         else:
             raise FileNotFoundError(
@@ -249,23 +251,16 @@ def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configurat
     if not os.path.exists(backend_cfg.scene_id):
         scene_id_parts = backend_cfg.scene_id.split('/')
         if 'habitat' in scene_id_parts and 'replicaSDK_stage.stage_config.json' in backend_cfg.scene_id:
-            # Prefer stage-config fallback to keep Habitat dataset metadata intact.
-            # Falling back directly to mesh_semantic.ply can break dataset loading and crash.
-            alt_stage = backend_cfg.scene_id.replace(
-                'replicaSDK_stage.stage_config.json', 'replica_stage.stage_config.json'
+            alt_path = backend_cfg.scene_id.replace(
+                'replicaSDK_stage.stage_config.json', 'mesh_semantic.ply'
             )
-            if os.path.exists(alt_stage):
-                backend_cfg.scene_id = alt_stage
+            if os.path.exists(alt_path):
+                backend_cfg.scene_id = alt_path
             else:
-                alt_path = backend_cfg.scene_id.replace(
-                    'replicaSDK_stage.stage_config.json', 'mesh_semantic.ply'
-                )
                 raise FileNotFoundError(
                     f"Scene file not found: {backend_cfg.scene_id}\n"
-                    f"Tried fallback stage config: {alt_stage}\n"
-                    f"Found mesh file: {os.path.exists(alt_path)} ({alt_path})\n"
-                    "Run `bash scripts/data/replica_update.sh data/replica_v1` to generate "
-                    "`replicaSDK_stage.stage_config.json` for all scenes."
+                    f"Also tried: {alt_path}\n"
+                    f"Please check that the scene mesh file exists in the habitat directory."
                 )
         else:
             raise FileNotFoundError(
@@ -283,12 +278,12 @@ def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configurat
             backend_cfg.scene_dataset_config_file = scene_dataset_config
         else:
             backend_cfg.scene_dataset_config_file = ""
-            raise FileNotFoundError(
-                "Replica dataset config is required but missing:\n"
-                f"  {scene_dataset_config}\n"
-                "Without this file Habitat may create an empty dataset handle and crash.\n"
-                "Restore it via `bash scripts/data/replica_update.sh data/replica_v1` or re-download Replica metadata."
-            )
+            if use_mesh_ply:
+                raise FileNotFoundError(
+                    "use_mesh_ply=True requires replica.scene_dataset_config.json next to "
+                    "the dataset root (e.g. data/replica_v1/replica.scene_dataset_config.json).\n"
+                    f"Missing: {scene_dataset_config}"
+                )
 
     ##################################################
     ### Add camera sensor spects

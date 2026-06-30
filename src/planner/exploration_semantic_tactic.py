@@ -19,6 +19,12 @@ import torch
 logger = logging.getLogger(__name__)
 
 
+def _is_oom_error(exc: BaseException) -> bool:
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    return "out of memory" in str(exc).lower()
+
+
 def keyframe_color_to_rgb_uint8(color: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
     """Keyframe color (CHW float or HWC) → uint8 RGB."""
     if isinstance(color, torch.Tensor):
@@ -243,6 +249,9 @@ class PlanningSAMCLIPEncoder:
         corrclip_interclass_suppress_alpha: float = 0.15,
         corrclip_interclass_sim_thresh: float = 0.78,
         corrclip_interclass_sigma_px: float = 120.0,
+        sam_points_per_side: int = 32,
+        sam_crop_n_layers: int = 1,
+        sam_crop_n_points_downscale_factor: int = 1,
     ) -> None:
         self.sam_ckpt_path = sam_ckpt_path
         self.clip_model_name = clip_model
@@ -259,6 +268,11 @@ class PlanningSAMCLIPEncoder:
         )
         self.corrclip_interclass_sim_thresh = float(corrclip_interclass_sim_thresh)
         self.corrclip_interclass_sigma_px = float(corrclip_interclass_sigma_px)
+        self.sam_points_per_side = int(sam_points_per_side)
+        self.sam_crop_n_layers = int(sam_crop_n_layers)
+        self.sam_crop_n_points_downscale_factor = int(
+            sam_crop_n_points_downscale_factor
+        )
         self._mask_generator = None
         self._clip_model = None
         self._clip_process = None
@@ -301,12 +315,12 @@ class PlanningSAMCLIPEncoder:
         sam.to(device=self.device)
         self._mask_generator = SamAutomaticMaskGenerator(
             model=sam,
-            points_per_side=32,
+            points_per_side=self.sam_points_per_side,
             pred_iou_thresh=0.7,
             box_nms_thresh=0.7,
             stability_score_thresh=0.85,
-            crop_n_layers=1,
-            crop_n_points_downscale_factor=1,
+            crop_n_layers=self.sam_crop_n_layers,
+            crop_n_points_downscale_factor=self.sam_crop_n_points_downscale_factor,
             min_mask_region_area=100,
         )
 
@@ -383,7 +397,20 @@ class PlanningSAMCLIPEncoder:
         import cv2
 
         image_bgr_sam = cv2.cvtColor(image_rgb_sam, cv2.COLOR_RGB2BGR)
-        masks_all_sam = self._mask_generator.generate(image_bgr_sam)
+        try:
+            masks_all_sam = self._mask_generator.generate(image_bgr_sam)
+        except Exception as exc:
+            if not _is_oom_error(exc):
+                raise
+            logger.warning(
+                "PlanningSAMCLIPEncoder: OOM during SAM mask generation on %s; "
+                "skip semantic scoring for this frame. Error: %s",
+                self.device,
+                exc,
+            )
+            if self.device.startswith("cuda"):
+                torch.cuda.empty_cache()
+            return np.zeros((0, 512), dtype=np.float32)
         if self.device.startswith("cuda"):
             torch.cuda.empty_cache()
 
@@ -393,15 +420,28 @@ class PlanningSAMCLIPEncoder:
             )[: self.max_masks_per_frame]
 
         masks_all = _sam_masks_to_habitat(masks_all_sam)
-        embs = _embed_masks_standalone(
-            image_rgb=image_rgb,
-            masks=masks_all,
-            clip_model=self._clip_model,
-            clip_process=self._clip_process,
-            device=self.device,
-            clip_batch_size=self.clip_batch_size,
-            bbox_pad_px=self.bbox_pad_px,
-        )
+        try:
+            embs = _embed_masks_standalone(
+                image_rgb=image_rgb,
+                masks=masks_all,
+                clip_model=self._clip_model,
+                clip_process=self._clip_process,
+                device=self.device,
+                clip_batch_size=self.clip_batch_size,
+                bbox_pad_px=self.bbox_pad_px,
+            )
+        except Exception as exc:
+            if not _is_oom_error(exc):
+                raise
+            logger.warning(
+                "PlanningSAMCLIPEncoder: OOM during CLIP embedding on %s; "
+                "skip semantic scoring for this frame. Error: %s",
+                self.device,
+                exc,
+            )
+            if self.device.startswith("cuda"):
+                torch.cuda.empty_cache()
+            return np.zeros((0, 512), dtype=np.float32)
         masks_all, embs = self._apply_corrclip_postprocess(masks_all, embs)
         if self.device.startswith("cuda"):
             torch.cuda.empty_cache()
@@ -425,6 +465,9 @@ class HybridSemanticExplorationScorer:
         max_masks_per_candidate: int = 40,
         novelty_aggregation: str = "mean",
         min_bank_masks: int = 8,
+        sam_points_per_side: int = 32,
+        sam_crop_n_layers: int = 1,
+        sam_crop_n_points_downscale_factor: int = 1,
         **corrclip_kwargs,
     ) -> None:
         self.bank = KeyframeMaskEmbeddingBank(lang_feat_dir)
@@ -434,6 +477,9 @@ class HybridSemanticExplorationScorer:
             clip_pretrained=clip_pretrained,
             device=device,
             max_masks_per_frame=max_masks_per_candidate,
+            sam_points_per_side=sam_points_per_side,
+            sam_crop_n_layers=sam_crop_n_layers,
+            sam_crop_n_points_downscale_factor=sam_crop_n_points_downscale_factor,
             **corrclip_kwargs,
         )
         self.novelty_aggregation = novelty_aggregation

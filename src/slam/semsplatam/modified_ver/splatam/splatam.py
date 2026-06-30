@@ -511,12 +511,17 @@ def get_loss_with_seman(params, curr_data, variables, iter_time_idx, loss_weight
     uncertainty = depth_sq - depth ** 2
     uncertainty = uncertainty.detach()
 
-    # Semantic Rendering
-    n_cls = int(curr_data['cam'].num_channels)
-    variables['seman_cls_ids'] = variables['seman_cls_ids'].clamp(0, max(n_cls - 1, 0))
-    seman_rendervar = transformed_params2semrendervar_sparse(params, transformed_gaussians, seen)
-    sparse_cam = set_camera_sparse(cam=curr_data['cam'],cls_ids=variables['seman_cls_ids'])
-    seman_im, _, = SEMRenderer_sparse(raster_settings=sparse_cam)(**seman_rendervar)
+    # Semantic rendering/loss is optional.
+    # On MP3D, sparse semantic rasterizer backward may become unstable for long runs.
+    seman_w = float(loss_weights.get('seman', 0.0)) if isinstance(loss_weights, dict) else 0.0
+    use_semantic_loss = seman_w > 0.0
+    seman_im = None
+    if use_semantic_loss:
+        n_cls = int(curr_data['cam'].num_channels)
+        variables['seman_cls_ids'] = variables['seman_cls_ids'].clamp(0, max(n_cls - 1, 0))
+        seman_rendervar = transformed_params2semrendervar_sparse(params, transformed_gaussians, seen)
+        sparse_cam = set_camera_sparse(cam=curr_data['cam'],cls_ids=variables['seman_cls_ids'])
+        seman_im, _, = SEMRenderer_sparse(raster_settings=sparse_cam)(**seman_rendervar)
 
     # Mask with valid depth values (accounts for outlier depth values)
     nan_mask = (~torch.isnan(depth)) & (~torch.isnan(uncertainty))
@@ -550,23 +555,30 @@ def get_loss_with_seman(params, curr_data, variables, iter_time_idx, loss_weight
         losses['im'] = 0.8 * l1_loss_v1(im, curr_data['im']) + 0.2 * (1.0 - calc_ssim(im, curr_data['im']))
 
     # Semantic Loss
-    if tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
-        n_channels = seman_im.shape[0]
-        seman_mask = torch.tile(mask, (n_channels, 1, 1))
-        seman_mask = seman_mask.detach()
-        losses['seman'] = 1- calc_cosine(curr_data['seman'],seman_im,dim=0)[seman_mask].sum()
-    elif tracking:
-        losses['seman'] = 1- calc_cosine(curr_data['seman'],seman_im,dim=0).sum()
-    else:
-        if 'crop_mask' in curr_data.keys():
-
-            ### when optimizing the global keyframe, crop the boundary pixels for uncertainty semantic info
-             seman_im = seman_im[:,curr_data['crop_mask']]
-             seman_pseudo = curr_data['seman'][:, curr_data['crop_mask']]
-             losses['seman'] = lambda_hel * calc_hellinger_distance(pred_dist=seman_im, target_dist=seman_pseudo) + lambda_cosine * (1 - calc_cosine(seman_pseudo, seman_im, dim=0))
+    if use_semantic_loss:
+        if tracking and (use_sil_for_loss or ignore_outlier_depth_loss):
+            n_channels = seman_im.shape[0]
+            seman_mask = torch.tile(mask, (n_channels, 1, 1))
+            seman_mask = seman_mask.detach()
+            losses['seman'] = 1 - calc_cosine(curr_data['seman'], seman_im, dim=0)[seman_mask].sum()
+        elif tracking:
+            losses['seman'] = 1 - calc_cosine(curr_data['seman'], seman_im, dim=0).sum()
         else:
-            losses['seman'] = lambda_hel * calc_hellinger_distance(pred_dist=seman_im,target_dist=curr_data['seman']) + lambda_cosine *(1-calc_cosine(curr_data['seman'],seman_im,dim=0))
-            #losses['seman'] = lambda_hel * calc_kl(pred_dist=seman_im,target_dist=curr_data['seman']) + lambda_cosine * (1 - calc_cosine(curr_data['seman'], seman_im, dim=0))
+            if 'crop_mask' in curr_data.keys():
+                # when optimizing the global keyframe, crop boundary pixels with uncertain semantics
+                seman_im = seman_im[:, curr_data['crop_mask']]
+                seman_pseudo = curr_data['seman'][:, curr_data['crop_mask']]
+                losses['seman'] = (
+                    lambda_hel * calc_hellinger_distance(pred_dist=seman_im, target_dist=seman_pseudo)
+                    + lambda_cosine * (1 - calc_cosine(seman_pseudo, seman_im, dim=0))
+                )
+            else:
+                losses['seman'] = (
+                    lambda_hel * calc_hellinger_distance(pred_dist=seman_im, target_dist=curr_data['seman'])
+                    + lambda_cosine * (1 - calc_cosine(curr_data['seman'], seman_im, dim=0))
+                )
+    else:
+        losses['seman'] = torch.tensor(0.0, device=im.device)
 
 
     # Visualize the Diff Images

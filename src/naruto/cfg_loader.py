@@ -87,6 +87,10 @@ def override_cfg(
                 del cfg['clip']
         # use_clip == 1 → keep whatever the config file defines (no action needed)
 
+    _normal_run = os.getenv("ACTIVESGM_NORMAL_RUN", "0").strip().lower()
+    if _normal_run in ("1", "true", "yes", "on") and hasattr(cfg, "slam"):
+        cfg.slam.eval_during_training = False
+
     if hasattr(args, "corrclip") and args.corrclip is not None and hasattr(cfg, "sam_clip"):
         if cfg.sam_clip is None:
             pass

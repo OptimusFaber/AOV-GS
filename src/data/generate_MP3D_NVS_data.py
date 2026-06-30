@@ -149,6 +149,10 @@ if __name__ == "__main__":
     args = argument_parsing()
     info_printer("Loading configuration...", 0, "Initialization")
     main_cfg = load_cfg(args)
+    # Some config files keep imported modules (e.g. os/np) in top-level scope.
+    for _k in ("os", "np"):
+        main_cfg._cfg_dict.pop(_k, None)
+    os.makedirs(main_cfg.dirs.result_dir, exist_ok=True)
     main_cfg.dump(os.path.join(main_cfg.dirs.result_dir, 'main_cfg.json'))
     info_printer.update_total_step(main_cfg.general.num_iter)
     info_printer.update_scene(main_cfg.general.dataset + " - " + main_cfg.general.scene)
@@ -179,7 +183,7 @@ if __name__ == "__main__":
     ### Run ActiveLang
     ##################################################
     ## load initial pose and convert from RUB to RDF (splatam)) ##
-    pose_0 = main_cfg.slam.start_c2w # RUB
+    pose_0 = np.array(main_cfg.slam.start_c2w, dtype=np.float32)  # RUB
     c2w_slam = torch.from_numpy(pose_0).float() # RUB
     c2w_slam[:3, 1] *= -1
     c2w_slam[:3, 2] *= -1 # RDF

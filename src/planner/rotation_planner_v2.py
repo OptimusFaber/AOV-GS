@@ -4,6 +4,35 @@ import matplotlib.pyplot as plt
 
 ## From path_plan_4.py ##
 
+
+def _safe_unit(v, fallback=None):
+    v = np.asarray(v, dtype=np.float64).reshape(-1)
+    n = float(np.linalg.norm(v))
+    if np.isfinite(n) and n >= 1e-9:
+        return v / n
+    if fallback is not None:
+        return _safe_unit(fallback, fallback=None)
+    return np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+
+def _rotmat_dir_gravity(direction, gravity_vector, fallback_rot=None):
+    """Camera axes (x, y, z) with z along ``direction`` and y ~ ``gravity_vector``."""
+    z_axis = _safe_unit(direction)
+    y_axis = _safe_unit(gravity_vector, fallback=np.array([0.0, -1.0, 0.0]))
+    x_axis = np.cross(y_axis, z_axis)
+    x_norm = float(np.linalg.norm(x_axis))
+    if not np.isfinite(x_norm) or x_norm < 1e-9:
+        if fallback_rot is not None:
+            return np.asarray(fallback_rot, dtype=np.float64)[:3, :3].copy()
+        x_axis = _safe_unit(np.cross(y_axis, np.array([1.0, 0.0, 0.0])))
+        if float(np.linalg.norm(np.cross(y_axis, x_axis))) < 1e-9:
+            x_axis = _safe_unit(np.cross(y_axis, np.array([0.0, 0.0, 1.0])))
+    else:
+        x_axis = x_axis / x_norm
+    y_axis = _safe_unit(np.cross(z_axis, x_axis), fallback=y_axis)
+    z_axis = _safe_unit(np.cross(x_axis, y_axis), fallback=z_axis)
+    return np.column_stack((x_axis, y_axis, z_axis))
+
 # Helper function for cubic Bezier curve interpolation
 def bezier_curve(t, p0, p1, p2, p3):
     return (1 - t) ** 3 * p0 + 3 * (1 - t) ** 2 * t * p1 + 3 * (1 - t) * t ** 2 * p2 + t ** 3 * p3
@@ -30,7 +59,11 @@ def lerp_quaternions(start_quat, end_quat, max_angle_deg):
     for i in range(min_steps + 1):
         t = i / min_steps
         interp_quat = (1 - t) * start_quat + t * end_quat
-        interp_quat /= np.linalg.norm(interp_quat)  # Normalize to keep it valid
+        qn = float(np.linalg.norm(interp_quat))
+        if not np.isfinite(qn) or qn < 1e-9:
+            interp_quat = start_quat if t < 0.5 else end_quat
+        else:
+            interp_quat = interp_quat / qn
         quaternions.append(interp_quat)
     return np.array(quaternions), min_steps
 
@@ -164,16 +197,9 @@ def smoothen_trajectory(start_pose, end_pose, positions, max_angle_deg=10, gravi
         # Stage 1: Interpolate from start_quat to the first trajectory-following rotation
         # Calculate the direction vector using positions[start_count] and positions[start_count + 1]
         direction = positions[start_count + 1] - positions[start_count]
-        direction /= np.linalg.norm(direction)
-
-        # Create rotation matrix for the start direction and align y-axis with gravity
-        z_axis = direction
-        y_axis = gravity_vector
-        x_axis = np.cross(y_axis, z_axis)  # Ensure orthogonal x-axis
-        x_axis /= np.linalg.norm(x_axis)  # Normalize the x-axis
-        y_axis = np.cross(z_axis, x_axis)  # Recompute y to ensure orthogonality
-
-        target_rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        target_rotation_matrix = _rotmat_dir_gravity(
+            direction, gravity_vector, fallback_rot=start_pose[:3, :3]
+        )
         target_quat = R.from_matrix(target_rotation_matrix).as_quat()
 
         # Interpolate from start_quat to target_quat to smoothly transition into trajectory-following rotation
@@ -184,16 +210,9 @@ def smoothen_trajectory(start_pose, end_pose, positions, max_angle_deg=10, gravi
         # Stage 2: Interpolate from the last trajectory-following rotation to end_rot
         # Calculate the direction vector using positions[-end_count - 1] and positions[-end_count]
         end_direction = positions[-end_count] - positions[-end_count - 1]
-        end_direction /= np.linalg.norm(end_direction)
-
-        # Create rotation matrix for end direction and align y-axis with gravity
-        z_axis = end_direction
-        y_axis = gravity_vector
-        x_axis = np.cross(y_axis, z_axis)
-        x_axis /= np.linalg.norm(x_axis)
-        y_axis = np.cross(z_axis, x_axis)
-
-        end_target_rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        end_target_rotation_matrix = _rotmat_dir_gravity(
+            end_direction, gravity_vector, fallback_rot=end_pose[:3, :3]
+        )
         end_target_quat = R.from_matrix(end_target_rotation_matrix).as_quat()
 
         # Interpolate from the last trajectory-following rotation to the end_rot smoothly
@@ -208,18 +227,13 @@ def smoothen_trajectory(start_pose, end_pose, positions, max_angle_deg=10, gravi
         # print("Middle end index:", middle_end)
 
         # Stage 3: Apply trajectory-following rotations for the middle section
+        prev_rot = start_pose[:3, :3]
         for i in range(middle_start, middle_end):
             direction = positions[i + 1] - positions[i]
-            direction /= np.linalg.norm(direction)
-
-            # Create rotation matrix to align z-axis with direction and y-axis with gravity
-            z_axis = direction
-            y_axis = gravity_vector
-            x_axis = np.cross(y_axis, z_axis)  # Ensure orthogonal x-axis
-            x_axis /= np.linalg.norm(x_axis)  # Normalize the x-axis
-            y_axis = np.cross(z_axis, x_axis)  # Recompute y to ensure orthogonality
-
-            rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+            rotation_matrix = _rotmat_dir_gravity(
+                direction, gravity_vector, fallback_rot=prev_rot
+            )
+            prev_rot = rotation_matrix
             rotations[i] = R.from_matrix(rotation_matrix).as_euler('xyz', degrees=True)
 
     # Case 3: Positions exceed rotations
@@ -404,16 +418,9 @@ def smoothen_trajectory_v2(start_pose, end_pose, positions, max_angle_deg=10, gr
         # Stage 1: Interpolate from start_quat to the first trajectory-following rotation
         # Calculate the direction vector using positions[start_count] and positions[start_count + 1]
         direction = positions[start_count + 1] - positions[start_count]
-        direction /= np.linalg.norm(direction)
-
-        # Create rotation matrix for the start direction and align y-axis with gravity
-        z_axis = direction
-        y_axis = gravity_vector
-        x_axis = np.cross(y_axis, z_axis)  # Ensure orthogonal x-axis
-        x_axis /= np.linalg.norm(x_axis)  # Normalize the x-axis
-        y_axis = np.cross(z_axis, x_axis)  # Recompute y to ensure orthogonality
-
-        target_rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        target_rotation_matrix = _rotmat_dir_gravity(
+            direction, gravity_vector, fallback_rot=start_pose[:3, :3]
+        )
         target_quat = R.from_matrix(target_rotation_matrix).as_quat()
 
         # Interpolate from start_quat to target_quat to smoothly transition into trajectory-following rotation
@@ -424,16 +431,9 @@ def smoothen_trajectory_v2(start_pose, end_pose, positions, max_angle_deg=10, gr
         # Stage 2: Interpolate from the last trajectory-following rotation to end_rot
         # Calculate the direction vector using positions[-end_count - 1] and positions[-end_count]
         end_direction = positions[-end_count] - positions[-end_count - 1]
-        end_direction /= np.linalg.norm(end_direction)
-
-        # Create rotation matrix for end direction and align y-axis with gravity
-        z_axis = end_direction
-        y_axis = gravity_vector
-        x_axis = np.cross(y_axis, z_axis)
-        x_axis /= np.linalg.norm(x_axis)
-        y_axis = np.cross(z_axis, x_axis)
-
-        end_target_rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+        end_target_rotation_matrix = _rotmat_dir_gravity(
+            end_direction, gravity_vector, fallback_rot=end_pose[:3, :3]
+        )
         end_target_quat = R.from_matrix(end_target_rotation_matrix).as_quat()
 
         # Interpolate from the last trajectory-following rotation to the end_rot smoothly
@@ -448,18 +448,13 @@ def smoothen_trajectory_v2(start_pose, end_pose, positions, max_angle_deg=10, gr
         # print("Middle end index:", middle_end)
 
         # Stage 3: Apply trajectory-following rotations for the middle section
+        prev_rot = start_pose[:3, :3]
         for i in range(middle_start, middle_end):
             direction = positions[i + 1] - positions[i]
-            direction /= np.linalg.norm(direction)
-
-            # Create rotation matrix to align z-axis with direction and y-axis with gravity
-            z_axis = direction
-            y_axis = gravity_vector
-            x_axis = np.cross(y_axis, z_axis)  # Ensure orthogonal x-axis
-            x_axis /= np.linalg.norm(x_axis)  # Normalize the x-axis
-            y_axis = np.cross(z_axis, x_axis)  # Recompute y to ensure orthogonality
-
-            rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+            rotation_matrix = _rotmat_dir_gravity(
+                direction, gravity_vector, fallback_rot=prev_rot
+            )
+            prev_rot = rotation_matrix
             rotations[i] = R.from_matrix(rotation_matrix).as_euler('xyz', degrees=True)
 
     # Case 3: Positions exceed rotations

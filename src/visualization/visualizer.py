@@ -30,6 +30,10 @@ import torch
 from typing import Union
 
 from src.utils.display_utils import has_gui_display
+
+from src.utils.display_utils import has_gui_display
+
+
 from src.utils.general_utils import InfoPrinter
 
 from third_parties.coslam.utils import colormap_image

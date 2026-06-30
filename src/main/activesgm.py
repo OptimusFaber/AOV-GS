@@ -26,6 +26,7 @@ import json
 import numpy as np
 import os
 import re
+import time
 import sys
 sys.path.append(os.getcwd())
 
@@ -38,6 +39,7 @@ import torch
 
 from src.naruto.cfg_loader import argument_parsing, load_cfg, save_cfg_to_json
 from src.planner import init_planner
+from src.planner.planner import sanitize_pose_c2w
 from src.slam import init_SLAM_model
 from src.simulator import init_simulator
 from src.utils.timer import Timer
@@ -254,8 +256,45 @@ if __name__ == "__main__":
     ### add timer for planning related timing ###
     planner.timer = timer
 
+    ##################################################
+    ### Stage / VRAM logging
+    ##################################################
+    stage_log_path = os.path.join(main_cfg.dirs.result_dir, "stage_timing.log")
+    stage_maps_dir = os.path.join(main_cfg.dirs.result_dir, "stage_maps")
+    os.makedirs(stage_maps_dir, exist_ok=True)
+
+    def _stage_label() -> str:
+        if not main_cfg.slam.enable_active_planning:
+            return "exploration"
+        if planner.planning_state == "exploration":
+            return f"exploration_stage_{planner.exploration_stage}"
+        return str(planner.planning_state)
+
+    def _vram_stats_line() -> str:
+        if not torch.cuda.is_available():
+            return "VRAM unavailable (CUDA disabled)"
+        dev = torch.cuda.current_device()
+        free_b, total_b = torch.cuda.mem_get_info(dev)
+        used_b = total_b - free_b
+        max_alloc_b = torch.cuda.max_memory_allocated(dev)
+        max_reserved_b = torch.cuda.max_memory_reserved(dev)
+        gb = float(1024 ** 3)
+        return (
+            f"GPU{dev}: used={used_b/gb:.2f}GB, free={free_b/gb:.2f}GB, total={total_b/gb:.2f}GB, "
+            f"peak_alloc={max_alloc_b/gb:.2f}GB, peak_reserved={max_reserved_b/gb:.2f}GB"
+        )
+
+    with open(stage_log_path, "w", encoding="utf-8") as _f:
+        _f.write("# stage, event, step, elapsed_sec, vram\n")
+
+    _active_stage = _stage_label()
+    _active_stage_start_t = time.time()
+    with open(stage_log_path, "a", encoding="utf-8") as _f:
+        _f.write(f"{_active_stage},START,0,0.0,{_vram_stats_line()}\n")
+
     # Robot trajectory in Habitat RUB (for top-down path figure).
     exploration_path_poses: list = []
+    last_valid_c2w_sim = None
 
     for i in range(main_cfg.general.num_iter):
     # for i in range(0, main_cfg.general.num_iter, 10):
@@ -290,6 +329,8 @@ if __name__ == "__main__":
         ##################################################
         ### Simulation
         ##################################################
+        c2w_sim = sanitize_pose_c2w(c2w_sim, fallback=last_valid_c2w_sim)
+        last_valid_c2w_sim = c2w_sim.copy()
         timer.start("Simulation", "General")
         vis_semantic = getattr(main_cfg.visualizer, 'vis_semantic', False)
         sim_out = sim.simulate(c2w_sim, return_semantic=vis_semantic)
@@ -459,6 +500,34 @@ if __name__ == "__main__":
             _pose_rub[:3, 2] *= -1
             exploration_path_poses.append(_pose_rub)
 
+            # Stage transition bookkeeping (step + duration + VRAM) and per-stage path snapshots.
+            _new_stage = _stage_label()
+            if _new_stage != _active_stage:
+                _elapsed = time.time() - _active_stage_start_t
+                with open(stage_log_path, "a", encoding="utf-8") as _f:
+                    _f.write(
+                        f"{_active_stage},END,{i+1},{_elapsed:.3f},{_vram_stats_line()}\n"
+                    )
+                    _f.write(
+                        f"{_new_stage},START,{i+1},0.0,{_vram_stats_line()}\n"
+                    )
+
+                if exploration_path_poses:
+                    _bbox = getattr(main_cfg.slam, "bbox_bound", None)
+                    _bbox_xy = _bbox[:2] if _bbox is not None else None
+                    _stage_dir = os.path.join(stage_maps_dir, _active_stage)
+                    os.makedirs(_stage_dir, exist_ok=True)
+                    save_exploration_path_topdown(
+                        exploration_path_poses,
+                        _stage_dir,
+                        bbox_xy=_bbox_xy,
+                        scene_name=main_cfg.general.scene,
+                        run_tag=f"{os.path.basename(os.path.normpath(main_cfg.dirs.result_dir))}_{_active_stage}",
+                    )
+
+                _active_stage = _new_stage
+                _active_stage_start_t = time.time()
+
             if planner.planning_state == "done":
                 break
 
@@ -596,6 +665,11 @@ if __name__ == "__main__":
             0,
             "Trajectory",
         )
+
+    # Finalize stage timing log with the last active stage.
+    _elapsed = time.time() - _active_stage_start_t
+    with open(stage_log_path, "a", encoding="utf-8") as _f:
+        _f.write(f"{_active_stage},END,final,{_elapsed:.3f},{_vram_stats_line()}\n")
 
     ##################################################
     ### Save Final Mesh and Checkpoint

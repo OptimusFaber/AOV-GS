@@ -24,6 +24,20 @@ from utils.eval_helpers import evaluate_ate, plot_rgbd_silhouette
 loss_fn_alex = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).cuda()
 
 
+def _dataset_name(dataset) -> str:
+    return str(getattr(dataset, "name", "")).lower()
+
+
+def _pose_rub_to_rdf_if_scannet(T: torch.Tensor, dataset) -> torch.Tensor:
+    """Eval poses for ScanNet NVS are stored in Habitat RUB; SplaTAM uses RDF."""
+    if _dataset_name(dataset) != "scannet":
+        return T
+    out = T.clone()
+    out[:3, 1] *= -1
+    out[:3, 2] *= -1
+    return out
+
+
 def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=None):
     """
     Function to transform Isotropic or Anisotropic Gaussians from world frame to camera frame.
@@ -45,7 +59,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=No
         else:
             cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
             cam_tran = params['cam_trans'][..., time_idx].detach()
-        rel_w2c = torch.eye(4, device=cam_tran.device, dtype=cam_tran.dtype)
+        rel_w2c = torch.eye(4).cuda().float()
         rel_w2c[:3, :3] = build_rotation(cam_rot)
         rel_w2c[:3, 3] = cam_tran
     else:
@@ -70,7 +84,7 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad, rel_w2c=No
     
     transformed_gaussians = {}
     # Transform Centers of Gaussians to Camera Frame
-    pts_ones = torch.ones(pts.shape[0], 1, device=pts.device, dtype=pts.dtype)
+    pts_ones = torch.ones(pts.shape[0], 1).cuda().float()
     pts4 = torch.cat((pts, pts_ones), dim=1)
     transformed_pts = (rel_w2c @ pts4.T).T[:, :3]
     transformed_gaussians['means3D'] = transformed_pts
@@ -92,12 +106,31 @@ def render_rgb_eval_pose(
     *,
     train_first_abs_c2w=None,
     align_eval_world: bool = False,
+    eval_frame_offset: int = 0,
+    eval_frame_step: int = 1,
+    eval_train_start_c2w=None,
 ):
     """Render one RGB view using the **same convention as** ``eval()`` ("SplaTAM-AOV" eval path).
 
     Gaussians at frame ``time_idx`` are transformed with ``transform_to_frame(..., rel_w2c=gt_w2c_k)``.
     The rasterizer camera is built **once** from dataset frame 0 (intrinsics + ``first_frame_w2c``),
     **not** from the current pose — matching ``setup_camera`` inside ``eval()`` when ``time_idx == 0``.
+
+    This differs from vanilla one-matrix setups (e.g. ``LangSplatam.render_rgb``), which use the
+    same ``w2c`` for both Gaussian transform and camera projection.
+
+    Parameters
+    ----------
+    dataset : SplaTAM eval dataset (often ``slam.dataset_eval``).
+    final_params : Gaussian ``params`` dict (same object passed to ``eval()``).
+    time_idx : Index into ``dataset`` (same as ``eval`` loop / ``gs_{:04d}.png``).
+
+    Returns
+    -------
+    bgr : np.ndarray uint8 H×W×3
+    w2c_np : np.ndarray 4×4 ``gt_w2c`` used for Gaussian transform
+    note : str brief description of pose convention
+    color_k : GT color tensor for frame ``time_idx`` (dataset raw; for side-by-side dumps)
     """
     use_world_align = (
         align_eval_world
@@ -110,13 +143,37 @@ def render_rgb_eval_pose(
             "using dataset relative poses (cross-sequence metrics may be wrong)."
         )
 
-    color0, _depth0, intr0, pose0 = dataset[0]
+    dataset_len = len(dataset)
+    eval_frame_step = int(eval_frame_step)
+    if eval_frame_step == 0:
+        eval_frame_step = 1
+
+    use_train_start_anchor = (
+        eval_train_start_c2w is not None
+        and hasattr(dataset, "poses_absolute")
+        and dataset_len > 0
+        and not use_world_align
+    )
+    if use_train_start_anchor:
+        data_idx = (int(time_idx) * eval_frame_step) % dataset_len
+    else:
+        eval_frame_offset = int(eval_frame_offset) % max(dataset_len, 1)
+        data_idx = (eval_frame_offset + int(time_idx) * eval_frame_step) % max(dataset_len, 1)
+
+    color0, _depth0, intr0, pose0 = dataset[data_idx if dataset_len > 0 else 0]
+    pose0 = _pose_rub_to_rdf_if_scannet(pose0, dataset)
     if use_world_align:
         assert train_first_abs_c2w is not None
-        T0 = dataset.poses_absolute[0].to(device=pose0.device, dtype=pose0.dtype)
+        T0 = _pose_rub_to_rdf_if_scannet(
+            dataset.poses_absolute[data_idx].to(device=pose0.device, dtype=pose0.dtype),
+            dataset,
+        )
         t0 = train_first_abs_c2w.to(device=pose0.device, dtype=pose0.dtype)
         first_frame_w2c = torch.linalg.inv(T0) @ t0
         note = "gt_w2c = inv(poses_absolute[k]) @ train_first_abs_c2w (align_eval_world)"
+    elif use_train_start_anchor:
+        first_frame_w2c = torch.eye(4, device=pose0.device, dtype=pose0.dtype)
+        note = "gt_w2c = inv(RDF(T_k)) @ RDF(slam.start_c2w)"
     else:
         first_frame_w2c = torch.linalg.inv(pose0)
         note = "gt_w2c = inv(pose) (dataset relative / no cross-sequence align)"
@@ -131,12 +188,23 @@ def render_rgb_eval_pose(
         first_frame_w2c.detach().cpu().numpy(),
     )
 
-    color_k, _depth_k, _intr_k, pose_k = dataset[time_idx]
+    color_k, _depth_k, _intr_k, pose_k = dataset[data_idx if dataset_len > 0 else 0]
+    pose_k = _pose_rub_to_rdf_if_scannet(pose_k, dataset)
     if use_world_align:
-        assert train_first_abs_c2w is not None
-        Tk = dataset.poses_absolute[time_idx].to(device=pose_k.device, dtype=pose_k.dtype)
+        assert train_first_abs_c2w is not None and dataset_len > 0
+        Tk = _pose_rub_to_rdf_if_scannet(
+            dataset.poses_absolute[data_idx].to(device=pose_k.device, dtype=pose_k.dtype),
+            dataset,
+        )
         t0 = train_first_abs_c2w.to(device=pose_k.device, dtype=pose_k.dtype)
         gt_w2c = torch.linalg.inv(Tk) @ t0
+    elif use_train_start_anchor:
+        Tk = _pose_rub_to_rdf_if_scannet(
+            dataset.poses_absolute[data_idx].to(device=pose_k.device, dtype=pose_k.dtype),
+            dataset,
+        )
+        T0 = eval_train_start_c2w.to(device=pose_k.device, dtype=pose_k.dtype)
+        gt_w2c = torch.linalg.inv(Tk) @ T0
     else:
         gt_w2c = torch.linalg.inv(pose_k)
 
@@ -156,7 +224,6 @@ def render_rgb_eval_pose(
     bgr = cv2.cvtColor((rgb * 255.0).astype(np.uint8), cv2.COLOR_RGB2BGR)
     w2c_np = gt_w2c.detach().cpu().numpy().astype(np.float64)
     return bgr, w2c_np, note, color_k
-
 
 def resize_tensor(image, target_height, target_width, mode='bilinear'):
     # Resize tensor using F.interpolate
@@ -228,7 +295,9 @@ def plot_rgbd_silhouette_fast(color, depth, rastered_color, rastered_depth, pres
 def eval(dataset, final_params, num_frames, eval_dir, sil_thres, 
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False,
          ignore_first_frame = False,
-         train_first_abs_c2w=None, align_eval_world=False):
+         train_first_abs_c2w=None, align_eval_world=False,
+         eval_frame_offset: int = 0, eval_frame_step: int = 1,
+         eval_train_start_c2w=None):
     """If align_eval_world and train_first_abs_c2w are set, gt w2c is inv(T_k_abs) @ T0_train so the
     eval camera matches RGB/depth from a different sequence (e.g. replica_sim_nvs) while Gaussians live
     in the training (Replica) frame-0 world."""
@@ -268,13 +337,42 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
             "using dataset relative poses (cross-sequence metrics may be wrong)."
         )
 
+    dataset_len = len(dataset)
+    eval_frame_step = int(eval_frame_step)
+    if eval_frame_step == 0:
+        eval_frame_step = 1
+
+    use_train_start_anchor = (
+        eval_train_start_c2w is not None
+        and hasattr(dataset, "poses_absolute")
+        and dataset_len > 0
+        and not use_world_align
+    )
+    if not use_train_start_anchor:
+        eval_frame_offset = int(eval_frame_offset) % max(dataset_len, 1)
+
     for time_idx in tqdm(range(num_frames)):
+        if use_train_start_anchor:
+            data_idx = (time_idx * eval_frame_step) % dataset_len
+        else:
+            data_idx = (eval_frame_offset + time_idx * eval_frame_step) % dataset_len
          # Get RGB-D Data & Camera Parameters
-        color, depth, intrinsics, pose = dataset[time_idx]
+        color, depth, intrinsics, pose = dataset[data_idx]
+        pose = _pose_rub_to_rdf_if_scannet(pose, dataset)
         if use_world_align:
-            T_k_abs = dataset.poses_absolute[time_idx].to(device=pose.device, dtype=pose.dtype)
+            T_k_abs = _pose_rub_to_rdf_if_scannet(
+                dataset.poses_absolute[data_idx].to(device=pose.device, dtype=pose.dtype),
+                dataset,
+            )
             t0 = train_first_abs_c2w.to(device=pose.device, dtype=pose.dtype)
             gt_w2c = torch.linalg.inv(T_k_abs) @ t0
+        elif use_train_start_anchor:
+            T_k_abs = _pose_rub_to_rdf_if_scannet(
+                dataset.poses_absolute[data_idx].to(device=pose.device, dtype=pose.dtype),
+                dataset,
+            )
+            T0 = eval_train_start_c2w.to(device=pose.device, dtype=pose.dtype)
+            gt_w2c = torch.linalg.inv(T_k_abs) @ T0
         else:
             gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -285,9 +383,11 @@ def eval(dataset, final_params, num_frames, eval_dir, sil_thres,
         depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
 
         if time_idx == 0:
-            # Process Camera Parameters (must match gt_w2c used for rendering)
-            first_frame_w2c = gt_w2c
-            # Setup Camera
+            # ScanNet NVS: fixed projection camera (identity), same as render_scannet_gs_from_npz.
+            if use_train_start_anchor:
+                first_frame_w2c = torch.eye(4, device=pose.device, dtype=pose.dtype)
+            else:
+                first_frame_w2c = gt_w2c
             cam = setup_camera(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), first_frame_w2c.detach().cpu().numpy())
         
         # Skip frames if not eval_every

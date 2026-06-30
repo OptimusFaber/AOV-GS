@@ -29,6 +29,11 @@ def plot_rgbds_silhouette_fast(color, depth, seman_rgb, rastered_color, rastered
                          save_plot=False, wandb_run=None, wandb_step=None, wandb_title=None, 
                          diff_rgb=None, 
                          target_res=(256, 256), use_nearest_interp=True):        
+    def _to_u8_contiguous(arr):
+        arr = np.asarray(arr)
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        return np.ascontiguousarray(arr)
         
     # Resize images for faster plotting if target_res is provided
     mode = 'nearest' if use_nearest_interp else 'bilinear'
@@ -50,30 +55,65 @@ def plot_rgbds_silhouette_fast(color, depth, seman_rgb, rastered_color, rastered
     seman_np = seman.permute(1,2,0).cpu().numpy()*255
     rastered_seman_np = rastered_seman.permute(1,2,0).cpu().numpy()*255
 
+    # Ensure stable uint8 + contiguous buffers for OpenCV APIs.
+    color_np = _to_u8_contiguous(color_np)
+    rastered_color_np = _to_u8_contiguous(rastered_color_np)
+    seman_np = _to_u8_contiguous(seman_np)
+    rastered_seman_np = _to_u8_contiguous(rastered_seman_np)
+
     # Scale the depth images for better visualization in grayscale
     depth_np = cv2.applyColorMap(cv2.convertScaleAbs(depth_np, alpha=255 / 6.0), cv2.COLORMAP_JET)
     rastered_depth_np = cv2.applyColorMap(cv2.convertScaleAbs(rastered_depth_np, alpha=255 / 6.0), cv2.COLORMAP_JET)
     diff_depth_l1_np = cv2.applyColorMap(cv2.convertScaleAbs(diff_depth_l1_np, alpha=255 / 6.0), cv2.COLORMAP_JET)
+    depth_np = _to_u8_contiguous(depth_np)
+    rastered_depth_np = _to_u8_contiguous(rastered_depth_np)
+    diff_depth_l1_np = _to_u8_contiguous(diff_depth_l1_np)
     diff_depth_l1_np = cv2.resize(diff_depth_l1_np, target_res, interpolation=cv2.INTER_NEAREST)
+    diff_depth_l1_np = _to_u8_contiguous(diff_depth_l1_np)
 
     # Convert Silhouette or diff_rgb to numpy, if applicable
     if diff_rgb is not None:
         diff_rgb_np = diff_rgb.cpu().numpy()  # (H, W)
         diff_rgb_np = cv2.applyColorMap(cv2.convertScaleAbs(diff_rgb_np, alpha=255 / 6.0), cv2.COLORMAP_JET)
+        diff_rgb_np = _to_u8_contiguous(diff_rgb_np)
     else:
         # Resize presence_sil_mask to match the target resolution
         presence_sil_mask_np = cv2.resize(presence_sil_mask.astype(np.uint8) * 255, target_res, interpolation=cv2.INTER_NEAREST)
         
         # Convert the 2D mask to 3D by repeating the mask across the RGB channels (H, W) -> (H, W, 3)
         presence_sil_mask_np = np.stack([presence_sil_mask_np] * 3, axis=-1)
+        presence_sil_mask_np = _to_u8_contiguous(presence_sil_mask_np)
+        if int(presence_sil_mask_np.max()) == 0:
+            cv2.putText(
+                presence_sil_mask_np,
+                "No silhouette",
+                (12, target_res[1] // 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+    if int(rastered_color_np.max()) == 0:
+        cv2.putText(
+            rastered_color_np,
+            "No RGB render",
+            (12, target_res[1] // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
     # Stack the images horizontally for row 1 and row 2
-    row1 = np.hstack([color_np, depth_np, diff_rgb_np if diff_rgb is not None else presence_sil_mask_np, seman_np])
-    row2 = np.hstack([rastered_color_np, rastered_depth_np, diff_depth_l1_np, rastered_seman_np]).astype(np.uint8)
+    row1 = _to_u8_contiguous(np.hstack([color_np, depth_np, diff_rgb_np if diff_rgb is not None else presence_sil_mask_np, seman_np]))
+    row2 = _to_u8_contiguous(np.hstack([rastered_color_np, rastered_depth_np, diff_depth_l1_np, rastered_seman_np]))
 
 
     # Concatenate rows vertically to form the final image
-    final_image = np.vstack([row1, row2]).astype(np.uint8)
+    final_image = _to_u8_contiguous(np.vstack([row1, row2]))
 
     # Save the image using OpenCV
     if save_plot and plot_dir is not None and plot_name is not None:

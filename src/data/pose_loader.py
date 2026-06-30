@@ -141,7 +141,10 @@ class PoseLoader():
             if self.main_cfg.planner.use_traj_pose and self.predefined_traj is not None:
                 c2w_slam = self.predefined_traj[0].clone()
             elif self.main_cfg.slam.get("start_c2w", None) is not None:
-                c2w_slam = torch.from_numpy(self.main_cfg.slam.start_c2w).float()
+                start_c2w = self.main_cfg.slam.start_c2w
+                if not isinstance(start_c2w, np.ndarray):
+                    start_c2w = np.asarray(start_c2w, dtype=np.float32)
+                c2w_slam = torch.from_numpy(start_c2w).float()
             else:
                 raise NotImplementedError
 

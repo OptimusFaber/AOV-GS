@@ -7,6 +7,7 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pprint
 import shutil
 import sys
 import torch
@@ -89,7 +90,9 @@ class SplatamOurs(SlamModel):
         ### Copy config ###
         if not self.config['load_checkpoint']:
             os.makedirs(self.results_dir, exist_ok=True)
-            shutil.copy(self.slam_cfg.room_cfg, os.path.join(self.results_dir, "config.py"))
+            # Keep both the original template and the fully-resolved runtime config.
+            shutil.copy(self.slam_cfg.room_cfg, os.path.join(self.results_dir, "config_template.py"))
+            self._write_effective_config(os.path.join(self.results_dir, "config.py"))
         
 
         # Initialize list to keep track of Keyframes
@@ -416,7 +419,8 @@ class SplatamOurs(SlamModel):
         """
         intrinsics = self._get_scaled_camera_intrinsics()
 
-        color_processed = color.permute(2, 0, 1).to(self.device) / 255.0
+        # Simulator color is already normalized to [0, 1] in habitat_simulator.
+        color_processed = color.permute(2, 0, 1).to(self.device)
         depth_processed = depth.unsqueeze(0).to(self.device)
         h, w = color_processed.shape[1], color_processed.shape[2]
 
@@ -521,6 +525,30 @@ class SplatamOurs(SlamModel):
             return dict(train_first_abs_c2w=None, align_eval_world=False)
         t0 = self.dataset_sample.poses_absolute[0]
         return dict(train_first_abs_c2w=t0, align_eval_world=True)
+
+    def _eval_train_start_c2w_rdf(self):
+        """ScanNet: anchor NVS eval to ``slam.start_c2w`` (RUB→RDF), same as ``render_scannet_gs_from_npz``."""
+        if getattr(self.main_cfg.general, "dataset", None) != "ScanNet":
+            return None
+        if not bool(self.slam_cfg.get("eval_align_to_start_pose", False)):
+            return None
+        start_c2w = getattr(self.main_cfg.slam, "start_c2w", None)
+        if start_c2w is None:
+            return None
+        T = torch.tensor(start_c2w, dtype=torch.float32)
+        T_rdf = T.clone()
+        T_rdf[:3, 1] *= -1
+        T_rdf[:3, 2] *= -1
+        return T_rdf
+
+    def _eval_sequence_kwargs(self):
+        """Eval frame step; ScanNet uses ``slam.start_c2w`` anchor (no index offset)."""
+        step = int(self.slam_cfg.get("eval_frame_step", 1))
+        return dict(
+            eval_frame_offset=0,
+            eval_frame_step=step,
+            eval_train_start_c2w=self._eval_train_start_c2w_rdf(),
+        )
 
     def initialize_cam_params(self, num_frames):# num_frames: int
         '''
@@ -643,7 +671,8 @@ class SplatamOurs(SlamModel):
             else:
                 self.init_camera_parameters()
         self.update_gs_map(time_idx, color, depth, c2w, force_map_update, dont_add_kf, only_use_global_keyframe)
-        self.update_explr_map(time_idx, depth, c2w, force_map_update)
+        if self.slam_cfg.enable_active_planning:
+            self.update_explr_map(time_idx, depth, c2w, force_map_update)
 
     def update_global_keyframe_set_completeness(self, depth, c2w, thre, 
                                    time_idx, curr_gt_w2c, dont_add_kf, num_frames, force_map_update, config):
@@ -1288,6 +1317,7 @@ class SplatamOurs(SlamModel):
         
         # Evaluate Final Parameters
         _align = self._eval_alignment_kwargs()
+        _seq = self._eval_sequence_kwargs()
         with torch.no_grad():
             if config['use_wandb']:
                 eval(dataset, params, len(dataset), eval_dir, sil_thres=config['mapping']['sil_thres'],
@@ -1295,13 +1325,13 @@ class SplatamOurs(SlamModel):
                     mapping_iters=config['mapping']['num_iters'], add_new_gaussians=config['mapping']['add_new_gaussians'],
                     eval_every=config['eval_every'],
                     ignore_first_frame=ignore_first_frame,
-                    **_align)
+                    **_align, **_seq)
             else:
                 eval(dataset, params, len(dataset), eval_dir, sil_thres=config['mapping']['sil_thres'],
                     mapping_iters=config['mapping']['num_iters'], add_new_gaussians=config['mapping']['add_new_gaussians'],
                     eval_every=config['eval_every'],
                     ignore_first_frame=ignore_first_frame,
-                    **_align)
+                    **_align, **_seq)
 
         # Add Camera Parameters to Save them
         params['timestep'] = variables['timestep']
@@ -1343,18 +1373,19 @@ class SplatamOurs(SlamModel):
 
         # Evaluate Final Parameters
         _align = self._eval_alignment_kwargs()
+        _seq = self._eval_sequence_kwargs()
         with torch.no_grad():
             if config['use_wandb']:
                 eval(dataset, params, num_frames, eval_dir, sil_thres=config['mapping']['sil_thres'],
                     wandb_run=wandb_run, wandb_save_qual=config['wandb']['eval_save_qual'],
                     mapping_iters=config['mapping']['num_iters'], add_new_gaussians=config['mapping']['add_new_gaussians'],
                     eval_every=config['eval_every'], ignore_first_frame=ignore_first_frame,
-                    **_align)
+                    **_align, **_seq)
             else:
                 eval(dataset, params, num_frames, eval_dir, sil_thres=config['mapping']['sil_thres'],
                     mapping_iters=config['mapping']['num_iters'], add_new_gaussians=config['mapping']['add_new_gaussians'],
                     eval_every=config['eval_every'], ignore_first_frame=ignore_first_frame, save_frames=save_frames,
-                    **_align)
+                    **_align, **_seq)
         return
     
     def update_dict_recursive(self, dict1, dict2):
@@ -1410,6 +1441,16 @@ class SplatamOurs(SlamModel):
         print(f"{config}")
 
         return config
+
+    def _write_effective_config(self, output_path: str) -> None:
+        """Persist the final (overridden) SplaTAM config for reproducible eval/re-runs."""
+        cfg_text = pprint.pformat(self.config, width=120, sort_dicts=False)
+        with open(output_path, "w", encoding="utf-8") as cfg_f:
+            cfg_f.write("# Auto-generated by ActiveSGM SplaTAM wrapper.\n")
+            cfg_f.write("# This file stores the effective runtime config after main_cfg overrides.\n")
+            cfg_f.write("config = ")
+            cfg_f.write(cfg_text)
+            cfg_f.write("\n")
     
     def update_prev_keyframes(self):
         """ update last stored keyframe indexs

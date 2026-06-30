@@ -283,7 +283,10 @@ class SemSplatam(SplatamOurs):
         # Setup Camera
         cam = setup_camera(W, H, intrinsics.cpu().numpy(), w2c.detach().cpu().numpy(), num_channels=self.n_cls)
         
-        # Get Initial Point Cloud — use densification resolution when configured
+        # Get Initial Point Cloud
+        # NOTE: initializing from full-res (e.g. 680×1200) creates ~816k gaussians and may trigger CUDA
+        # illegal memory access / OOM in mapping for some scenes. If a densification resolution is
+        # configured, use it for point-cloud initialization only (camera stays full-res).
         dataset_config = self.config["data"]
         init_color = color_processed
         init_depth = depth_processed
@@ -476,7 +479,11 @@ class SemSplatam(SplatamOurs):
         # Initialize Render Variables
         seman_rendervar = transformed_params2semrendervar_sparse(params, transformed_gaussians, seen)
         sparse_cam = set_camera_sparse(cam=cam, cls_ids=cls_ids)
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
         logits, _, = SEMRenderer_sparse(raster_settings=sparse_cam)(**seman_rendervar)
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
 
         self.params['cam_trans'] = cam_trans_og
         self.params['cam_unnorm_rots'] = cam_rot_og
@@ -534,7 +541,6 @@ class SemSplatam(SplatamOurs):
             self.init_camera_parameters_from_simulator(color, depth, c2w)
 
         seg_img = color.clone().to(self.semantic_device)
-        self.semantic_annotation(seg_img)
         _, seman = self.semantic_annotation(seg_img)
         self.update_gs_map(
             time_idx, color, depth, seman, c2w,
@@ -574,6 +580,7 @@ class SemSplatam(SplatamOurs):
                     if is_global_kf or time_idx == 0:
                         self.global_keyframe_indices.append(len(self.keyframe_list))
                         self.global_keyframe_time_indices.append(time_idx)
+                        self._trim_global_keyframes()
 
     def update_global_keyframe_set_quality(self, color, depth, c2w, color_thre, depth_thre,
                                    time_idx, curr_gt_w2c, dont_add_kf, num_frames, force_map_update, config):
@@ -608,6 +615,7 @@ class SemSplatam(SplatamOurs):
                     if is_global_kf or time_idx == 0:
                         self.global_keyframe_indices.append(len(self.keyframe_list))
                         self.global_keyframe_time_indices.append(time_idx)
+                        self._trim_global_keyframes()
 
     def update_global_keyframe_set_quality_rel(self, 
                                             #   color, depth, c2w, color_thre, depth_thre,
@@ -671,6 +679,17 @@ class SemSplatam(SplatamOurs):
             self.global_keyframe_indices.extend(new_kf)
             new_kf_time_indices = [self.keyframe_time_indices[i] for i in new_kf]
             self.global_keyframe_time_indices.extend(new_kf_time_indices)
+            self._trim_global_keyframes()
+
+    def _trim_global_keyframes(self) -> None:
+        max_count = int(getattr(self.slam_cfg.global_keyframe, "max_count", 0))
+        if max_count <= 0 or len(self.global_keyframe_indices) <= max_count:
+            return
+        keep = self.global_keyframe_indices[-max_count:]
+        self.global_keyframe_indices = keep
+        self.global_keyframe_time_indices = [
+            self.keyframe_time_indices[i] for i in keep
+        ]
 
     @torch.no_grad()
     def update_explr_map(self,
@@ -892,10 +911,10 @@ class SemSplatam(SplatamOurs):
                     else:
                         report_progress(params, variables, tracking_curr_data, 1, progress_bar, iter_time_idx, sil_thres=config['tracking']['sil_thres'], tracking=True)
                 progress_bar.close()
-            except:
-                ckpt_output_dir = os.path.join(config["workdir"], config["run_name"])
-                save_params_ckpt(params, ckpt_output_dir, time_idx)
-                print('Failed to evaluate trajectory.')
+            except Exception as e:
+                # Do not dump periodic params*.npz on progress-report failures.
+                # Stage/final snapshots are saved explicitly via print_and_save_result().
+                print(f'Failed to evaluate trajectory: {e}')
 
         ##################################################
         ### update global keyframe
@@ -962,7 +981,18 @@ class SemSplatam(SplatamOurs):
                     if self.slam_cfg.use_global_keyframe:
                         global_keyframe_time_indices = [frame_idx for frame_idx in self.global_keyframe_time_indices if frame_idx != time_idx]
                         print(f"\nGlobal Keyframes at Frame {time_idx}: {global_keyframe_time_indices}")
-                
+
+                # Habitat / MP3D: mapping with stale keyframe RGB+pose after the first online
+                # step can trigger CUDA illegal memory access in the rasterizer backward.
+                # Restrict random-frame mapping to the current observation when enabled.
+                if (
+                    time_idx > 0
+                    and not only_use_global_keyframe
+                    and getattr(self.slam_cfg, "mapping_current_frame_only", False)
+                ):
+                    selected_keyframes = [-1]
+                    selected_time_idx = [time_idx]
+            
             # Reset Optimizer & Learning Rates for Full Map Optimization
             optimizer = initialize_optimizer(params, config['mapping']['lrs'], tracking=False)
 
@@ -979,7 +1009,12 @@ class SemSplatam(SplatamOurs):
                 ##################################################
                 ### Overlap Keyframe ###
 
-                if only_use_global_keyframe or (self.slam_cfg.use_global_keyframe and iter > num_iters_mapping // 2):
+                use_global_kf_for_iter = only_use_global_keyframe or (
+                    self.slam_cfg.use_global_keyframe
+                    and iter > num_iters_mapping // 2
+                    and not getattr(self.slam_cfg, "mapping_current_frame_only", False)
+                )
+                if use_global_kf_for_iter:
                     ### Global Keyframe ###
                     if len(self.global_keyframe_indices) == 1:
                         iter_time_idx = time_idx
@@ -992,9 +1027,12 @@ class SemSplatam(SplatamOurs):
                         iter_time_idx = keyframe_list[selected_rand_keyframe_idx]['id']
                         iter_color = keyframe_list[selected_rand_keyframe_idx]['color'] # C,H,W
                         iter_depth = keyframe_list[selected_rand_keyframe_idx]['depth']
-                        iter_seg_img = iter_color.permute(1,2,0).clone().to(self.semantic_device)
-                        _, iter_seman = self.semantic_annotation(iter_seg_img)
-                        iter_seman = iter_seman.permute(2,0,1).to(self.device)
+                        if 'seman' in keyframe_list[selected_rand_keyframe_idx]:
+                            iter_seman = keyframe_list[selected_rand_keyframe_idx]['seman']
+                        else:
+                            iter_seg_img = iter_color.permute(1,2,0).clone().to(self.semantic_device)
+                            _, iter_seman = self.semantic_annotation(iter_seg_img)
+                            iter_seman = iter_seman.permute(2,0,1).to(self.device)
                         if 'crop_mask' in keyframe_list[selected_rand_keyframe_idx].keys():
                             iter_crop_mask = keyframe_list[selected_rand_keyframe_idx]['crop_mask']
                         else:
@@ -1015,9 +1053,12 @@ class SemSplatam(SplatamOurs):
                         iter_time_idx = keyframe_list[selected_rand_keyframe_idx]['id']
                         iter_color = keyframe_list[selected_rand_keyframe_idx]['color']
                         iter_depth = keyframe_list[selected_rand_keyframe_idx]['depth']
-                        iter_seg_img = iter_color.permute(1, 2, 0).clone().to(self.semantic_device)
-                        _, iter_seman = self.semantic_annotation(iter_seg_img)
-                        iter_seman = iter_seman.permute(2,0,1).to(self.device)
+                        if 'seman' in keyframe_list[selected_rand_keyframe_idx]:
+                            iter_seman = keyframe_list[selected_rand_keyframe_idx]['seman']
+                        else:
+                            iter_seg_img = iter_color.permute(1, 2, 0).clone().to(self.semantic_device)
+                            _, iter_seman = self.semantic_annotation(iter_seg_img)
+                            iter_seman = iter_seman.permute(2, 0, 1).to(self.device)
                         if 'crop_mask' in keyframe_list[selected_rand_keyframe_idx].keys():
                             iter_crop_mask = keyframe_list[selected_rand_keyframe_idx]['crop_mask']
                         else:
@@ -1097,10 +1138,10 @@ class SemSplatam(SplatamOurs):
                                             eval_dir=self.eval_dir,
                                             mapping=True, online_time_idx=time_idx)
                     progress_bar.close()
-                except:
-                    ckpt_output_dir = os.path.join(config["workdir"], config["run_name"])
-                    save_params_ckpt(params, variables, ckpt_output_dir, time_idx)
-                    print('Failed to evaluate trajectory.')
+                except Exception as e:
+                    # Do not dump periodic params*.npz on progress-report failures.
+                    # Stage/final snapshots are saved explicitly via print_and_save_result().
+                    print(f'Failed to evaluate trajectory: {e}')
 
         ##################################################
         ### update global keyframe
@@ -1132,7 +1173,7 @@ class SemSplatam(SplatamOurs):
                     curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
                     curr_w2c[:3, 3] = curr_cam_tran
                     # Initialize Keyframe Info
-                    curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 'depth': depth}
+                    curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 'depth': depth, 'seman': seman.detach()}
                     # Add to keyframe list
                     keyframe_list.append(curr_keyframe)
                     keyframe_time_indices.append(time_idx)

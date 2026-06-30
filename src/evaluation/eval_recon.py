@@ -49,7 +49,7 @@ def as_mesh(scene_or_mesh):
                 tuple(trimesh.Trimesh(vertices=g.vertices, faces=g.faces)
                     for g in scene_or_mesh.geometry.values()))
     else:
-        assert(isinstance(mesh, trimesh.Trimesh))
+        assert isinstance(scene_or_mesh, trimesh.Trimesh)
         mesh = scene_or_mesh
     return mesh
 
