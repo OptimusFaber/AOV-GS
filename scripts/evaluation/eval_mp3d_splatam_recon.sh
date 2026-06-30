@@ -71,7 +71,7 @@ do
         python src/evaluation/eval_splatam_recon_v2.py \
         --ckpt ${result_dir}/splatam/exploration_stage_1/params.npz \
         --gt_mesh ${GT_MESH} \
-        --transform_traj data/mp3d_sim_nvs/${scene}/traj.txt \
+        --transform_traj data/mp3d_sim_nvs_v2/${scene}/traj.txt \
         --result_dir ${result_dir}/eval_3d/exploration_stage_1 \
 
         # python src/evaluation/eval_splatam_recon_v2.py \

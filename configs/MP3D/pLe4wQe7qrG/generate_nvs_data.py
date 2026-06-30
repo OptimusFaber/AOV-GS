@@ -51,13 +51,13 @@ slam = dict(
 
 if slam["method"] == "splatam":
     slam.update(
-        room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam_s.py",   # SplaTAM room configuration
+        room_cfg        = f"{dirs['cfg_dir']}/../mp3d_splatam_s.py",   # SplaTAM room configuration
         # room_cfg        = f"{dirs['cfg_dir']}/../replica_splatam.py",   # SplaTAM room configuration
         enable_active_planning = True,                             # enable/disable active planning
 
         ### bounding box ###
         # bbox_bound = [[-2.2,2.6],[-3.4,2.1],[-1.4,2.0]],
-        bbox_bound = [[-2.1,2.5],[-3.2,2],[-1.3,2.0]],
+        bbox_bound = [[-2.4, 9.2], [-3.8, 3.9], [-0.2, 10.5]],
         bbox_voxel_size = 0.05,
 
         surface_dist_thre = 0.5,
@@ -81,12 +81,12 @@ if slam["method"] == "splatam":
             )
         ),
 
-        start_c2w = np.array([
+        start_c2w = [
             [ 1,  0,  0,  5],
             [ 0,  0,  -1,  0],
             [ 0,  1,  0,  1.75],
-            [ 0,  0,  0,  1]]
-            ).astype(np.float32)
+            [ 0,  0,  0,  1],
+        ],
     )
 
 ##################################################
@@ -132,7 +132,7 @@ planner = dict(
     use_traj_pose = False,                          # use pre-defined trajectory pose
     SLAMData_dir = os.path.join(                    # SLAM Data directory (for passive mapping or pre-defined trajectory pose)
         dirs["data_dir"], 
-        "Replica", general['scene']
+        "MP3D", "v1/scans", general['scene']
         ),
 
     ### RRT ###

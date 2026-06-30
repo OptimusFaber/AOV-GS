@@ -64,6 +64,7 @@ if slam["method"] == "semsplatam":
         ### Refinement step ###
         # explore_map_iter = 1,
         refine_map_iter = 60,
+        mapping_current_frame_only = True,
         use_global_keyframe = True,
         global_keyframe = dict(
             completeness_thre = 0.1,
@@ -83,7 +84,7 @@ if slam["method"] == "semsplatam":
 
         semantic_dir="./data/replica_v1/office_0/habitat/",
         class_info_file='./configs/MP3D/class_info_file.json',
-        semantic_device="cuda:1",
+        semantic_device="cuda:0",
         oneformer_checkpoint='lly00412/oneformer-mp3d-finetune',
         coco_checkpoint='shi-labs/oneformer_coco_swin_large',
         ade20k_checkpoint="shi-labs/oneformer_ade20k_swin_large",
@@ -98,12 +99,12 @@ if slam["method"] == "semsplatam":
             )
         ),
 
-        start_c2w = np.array([
+        start_c2w = [
             [ 1,  0,  0,  5],
             [ 0,  0,  -1,  0],
             [ 0,  1,  0,  1.75],
-            [ 0,  0,  0,  1]]
-            ).astype(np.float32)
+            [ 0,  0,  0,  1],
+        ],
     )
 
 ##################################################

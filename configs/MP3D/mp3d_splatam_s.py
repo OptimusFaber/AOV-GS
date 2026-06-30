@@ -5,7 +5,8 @@ scenes = ["GdvgFV5R1Z5", "gZ6f7yhEvPG", "HxpKQynjfin", "pLe4wQe7qrG", "YmJkqBEsH
 
 primary_device="cuda:0"
 seed = 0
-scene_name = scenes[0]
+# Allow external override to avoid accidentally evaluating all runs on scenes[0].
+scene_name = os.environ.get("AOV_SCENE_NAME", scenes[0])
 
 map_every = 1
 keyframe_every = 5
@@ -44,7 +45,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/mp3d_sim_nvs",
+        basedir="./data/mp3d_sim_nvs_v2",
         gradslam_data_cfg="./configs/data/mp3d.yaml",
         sequence=scene_name,
         desired_image_height=680,
@@ -84,6 +85,7 @@ config = dict(
     mapping=dict(
         num_iters=mapping_iters,
         add_new_gaussians=True,
+        max_gaussians=3_000_000,
         sil_thres=0.5, # For Addition of new Gaussians
         use_l1=True,
         use_sil_for_loss=False,
@@ -91,7 +93,7 @@ config = dict(
         loss_weights=dict(
             im=0.5,
             depth=1.0,
-            seman=0.05,
+            seman=0.0,
         ),
         lrs=dict(
             means3D=0.0001,
@@ -103,7 +105,7 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
         ),
-        prune_gaussians=True, # Prune Gaussians during Mapping
+        prune_gaussians=False, # MP3D: pruning + sparse semantic backward can crash on Habitat
         pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
             start_after=0,
             remove_big_after=0,
