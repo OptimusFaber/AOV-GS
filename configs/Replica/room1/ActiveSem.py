@@ -56,7 +56,7 @@ if slam["method"] == "semsplatam":
         # dataset_eval_basedir="data/Replica",
 
         ### Validation during training ###
-        eval_during_training = True,                               # enable/disable validation during training
+        eval_during_training = False,                              # enable/disable validation during training
         eval_during_training_freq = 200,                          # evaluate every N iterations during training
         eval_during_training_max_frames = None,                   # None = all frames
 
@@ -91,7 +91,7 @@ if slam["method"] == "semsplatam":
 
         semantic_dir="./data/replica_v1/room_1/habitat/",
         class_info_file='./configs/Replica/office0/class_info_file.json',
-        semantic_device="cuda:0",
+        semantic_device="cuda:1",
         oneformer_checkpoint='lly00412/oneformer-replica-finetune',
         coco_checkpoint='shi-labs/oneformer_coco_swin_large',
         ade20k_checkpoint="shi-labs/oneformer_ade20k_swin_large",

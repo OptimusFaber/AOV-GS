@@ -83,7 +83,7 @@ if slam["method"] == "splatam":
         dataset_eval_basedir   = "data/replica_sim_nvs",
 
         ### Validation during training ###
-        eval_during_training            = True,
+        eval_during_training            = False,
         eval_during_training_freq       = 200,
         eval_during_training_max_frames = None,
 
@@ -117,6 +117,7 @@ if slam["method"] == "splatam":
         override = dict(
             map_every                    = 5,
             report_global_progress_every = 5,
+            save_checkpoints             = False,  # only stage/final via print_and_save_result
             tracking = dict(
                 use_gt_poses = True,  # Use GT Poses for Tracking
             ),
@@ -140,8 +141,9 @@ sam_clip = dict(
     clip_model      = "ViT-B-16",
     clip_pretrained = "laion2b_s34b_b88k",
 
-    # SAM+CLIP device (default cuda:0; override to cuda:1 if SLAM uses another GPU).
-    device = "cuda:0",
+    # Where to run SAM+CLIP (pick cuda:1 on multi-GPU setups; falls back
+    # to cuda:0 if only one GPU is available).
+    device = "cuda:1",
 
     # Throughput / memory knobs.
     queue_size          = 8,    # max keyframes in-flight
@@ -211,7 +213,7 @@ if planner["local_planner_method"] == "RRTNaruto":
         rrt_step_size      = planner["trans_step_size"] / slam["bbox_voxel_size"],
         rrt_step_amplifier = 10,
         rrt_maxz           = 100,
-        rrt_max_iter       = 50000,
+        rrt_max_iter       = None,
         rrt_z_levels       = None,
         enable_eval        = False,
         enable_direct_line = True,
