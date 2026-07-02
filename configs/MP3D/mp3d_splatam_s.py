@@ -105,7 +105,7 @@ config = dict(
             cam_unnorm_rots=0.0000,
             cam_trans=0.0000,
         ),
-        prune_gaussians=False, # MP3D: pruning + sparse semantic backward can crash on Habitat
+        prune_gaussians=True, # geometry SplaTAM: keep VRAM bounded on 16GB GPUs
         pruning_dict=dict( # Needs to be updated based on the number of mapping iterations
             start_after=0,
             remove_big_after=0,

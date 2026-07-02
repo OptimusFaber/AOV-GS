@@ -118,6 +118,40 @@ class SplatamOurs(SlamModel):
         ### load checkpoint ###
         if self.config['load_checkpoint']:
             self.load_checkpoint()
+
+    def _prune_gaussians_for_headroom(
+        self,
+        params,
+        variables,
+        max_gs: int,
+        target_frac: float = 0.88,
+    ):
+        """Drop lowest-opacity Gaussians until count <= max_gs * target_frac."""
+        max_gs = int(max_gs)
+        target = max(int(max_gs * float(target_frac)), 1)
+        cur = int(params["means3D"].shape[0])
+        if cur <= target:
+            return params, variables, 0
+
+        opacities = torch.sigmoid(params["logit_opacities"]).reshape(-1)
+        n_remove = cur - target
+        _, remove_idx = torch.topk(opacities, n_remove, largest=False)
+        keep_mask = torch.ones(cur, dtype=torch.bool, device=opacities.device)
+        keep_mask[remove_idx] = False
+
+        for k, v in params.items():
+            if k in ("cam_unnorm_rots", "cam_trans"):
+                continue
+            if v.ndim > 0 and v.shape[0] == cur:
+                params[k] = torch.nn.Parameter(
+                    v[keep_mask].detach().requires_grad_(True)
+                )
+
+        for vk in ("means2D_gradient_accum", "denom", "max_2D_radius", "timestep"):
+            if vk in variables and variables[vk].shape[0] == cur:
+                variables[vk] = variables[vk][keep_mask]
+
+        return params, variables, n_remove
         
     def init_exploration_map(self, sim2slam: torch.tensor):
         """ initialize exploration map (grid)
@@ -129,6 +163,10 @@ class SplatamOurs(SlamModel):
             explr_map (ExplorationMap)
             
         """
+        # Actual SLAM-world origin (RDF c2w of the first frame). Eval NVS anchoring
+        # must use THIS (not a re-derived config value) so the rendered map and the
+        # eval GT poses live in exactly the same frame.
+        self.c2w_slam_init = torch.inverse(sim2slam).detach().clone()
         self.explr_map = ExplorationMap(
             self.slam_cfg.bbox_bound, 
             self.slam_cfg.bbox_voxel_size, 
@@ -437,6 +475,13 @@ class SplatamOurs(SlamModel):
             compute_mean_sq_dist=True,
             mean_sq_dist_method=self.config['mean_sq_dist_method'],
         )
+        max_init = self.slam_cfg.get("max_init_gaussians", None)
+        if max_init is not None and init_pt_cld.shape[0] > int(max_init):
+            n = int(max_init)
+            perm = torch.randperm(init_pt_cld.shape[0], device=init_pt_cld.device)[:n]
+            init_pt_cld = init_pt_cld[perm]
+            if isinstance(mean3_sq_dist, torch.Tensor):
+                mean3_sq_dist = mean3_sq_dist[perm]
         params, variables = initialize_params(
             init_pt_cld,
             self.num_frames,
@@ -1014,11 +1059,31 @@ class SplatamOurs(SlamModel):
         if time_idx == 0 or (time_idx+1) % config['map_every'] == 0 or force_map_update:
             # Densification
             _max_gs = config['mapping'].get('max_gaussians', None)
+            _headroom_frac = float(config['mapping'].get('headroom_frac', 0.88))
             _cur_gs = params['means3D'].shape[0]
+            if (
+                config['mapping']['add_new_gaussians']
+                and time_idx > 0
+                and _max_gs is not None
+                and _cur_gs >= _max_gs
+            ):
+                params, variables, n_pruned = self._prune_gaussians_for_headroom(
+                    params, variables, _max_gs, _headroom_frac
+                )
+                if n_pruned > 0 and PRINT_INFO:
+                    print(
+                        f"[SplaTAM] Pruned {n_pruned:,} low-opacity Gaussians "
+                        f"for densification headroom (cap {_max_gs:,})"
+                    )
+                _cur_gs = params['means3D'].shape[0]
+
             _gs_cap_reached = (_max_gs is not None) and (_cur_gs >= _max_gs)
             if config['mapping']['add_new_gaussians'] and time_idx > 0 and not _gs_cap_reached:
                 if _max_gs is not None and _cur_gs > _max_gs * 0.9:
-                    print(f"[SplaTAM] Gaussian count {_cur_gs:,} approaching cap {_max_gs:,} — slowing additions")
+                    print(
+                        f"[SplaTAM] Gaussian count {_cur_gs:,} approaching cap "
+                        f"{_max_gs:,} — will prune for headroom if needed"
+                    )
                 # Setup Data for Densification
                 if seperate_densification_res:
                     # resize RGBD frames for densification
@@ -1035,6 +1100,14 @@ class SplatamOurs(SlamModel):
                 params, variables = add_new_gaussians(params, variables, densify_curr_data, 
                                                       config['mapping']['sil_thres'], time_idx,
                                                       config['mean_sq_dist_method'], config['gaussian_distribution'])
+                if _max_gs is not None and params['means3D'].shape[0] > _max_gs:
+                    params, variables, n_trim = self._prune_gaussians_for_headroom(
+                        params, variables, _max_gs, target_frac=1.0
+                    )
+                    if n_trim > 0 and PRINT_INFO:
+                        print(
+                            f"[SplaTAM] Trimmed {n_trim:,} Gaussians to respect cap {_max_gs:,}"
+                        )
                 post_num_pts = params['means3D'].shape[0]
                 if config['use_wandb']:
                     wandb_run.log({"Mapping/Number of Gaussians": post_num_pts,
