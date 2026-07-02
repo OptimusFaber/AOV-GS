@@ -121,6 +121,14 @@ class ExplorationMap:
         min_distances, _ = distances.min(dim=1)  ### Shape (M,)
         return min_distances
 
+    @staticmethod
+    def _distance_batch_sizes(num_queries: int, num_occupied: int, query_batch: int,
+                              max_matrix_elems: int = 2_000_000) -> Tuple[int, int]:
+        """Pick query/occupied chunk sizes so dist matrices stay within a memory budget."""
+        q_batch = max(1, min(int(query_batch), int(num_queries)))
+        o_batch = max(1, min(int(num_occupied), max_matrix_elems // q_batch))
+        return q_batch, o_batch
+
     @torch.no_grad()
     def find_free_indices(self, grid: torch.Tensor, query_points: torch.Tensor, dist_thre: float = 0.5, batch_size: int = 10000) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -137,34 +145,45 @@ class ExplorationMap:
                 - A tensor of shape (M, 3) with the coordinates of the truncated free regions.
                 - A tensor of shape (M, 3) with the coordinates of the neglected free regions.
         """
-        ### Step 1: Get coordinates of all occupied voxels in the grid ###
-        occupied_voxel_coords = torch.nonzero(grid == 1, as_tuple=False)  ### Shape (num_occupied, 3)
+        if query_points.numel() == 0:
+            return query_points, query_points.new_empty((0, 3))
 
-        ### initialization case ###
+        occupied_voxel_coords = torch.nonzero(grid == 1, as_tuple=False)
         if occupied_voxel_coords.size(0) == 0:
             return query_points, query_points.new_empty((0, 3))
 
-        ### Step 2: Expand query points and occupied voxel coordinates for broadcasting ###
-        query_points_exp = query_points.unsqueeze(1).float()  ### Shape (M, 1, 3)
-        occupied_voxel_coords_exp = occupied_voxel_coords.unsqueeze(0)  ### Shape (1, num_occupied, 3)
+        num_queries = query_points.shape[0]
+        num_occupied = occupied_voxel_coords.shape[0]
+        q_batch, o_batch = self._distance_batch_sizes(num_queries, num_occupied, batch_size)
 
-        ### Step 3: Calculate squared Euclidean distances between each query point and each occupied voxel ###
-        min_distances = []
-        # batch_size = 10000
-        num_repeat = query_points.shape[0] // batch_size
-        num_repeat = num_repeat + 1 if num_repeat * batch_size < query_points.shape[0] else num_repeat
-        if num_repeat > 0:
-            for i in range(num_repeat):
-                dist = torch.norm(query_points_exp[batch_size*i:batch_size*(i+1)] - occupied_voxel_coords_exp, dim=2)
-                min_distances.append(dist.min(dim=1)[0])
-            min_distances = torch.cat(min_distances, dim=0)
-        else:
-            distances = torch.norm(query_points_exp - occupied_voxel_coords_exp, dim=2)  ### Shape (M, num_occupied)
+        min_distances = torch.full(
+            (num_queries,),
+            float("inf"),
+            device=query_points.device,
+            dtype=torch.float32,
+        )
+        query_points_f = query_points.float()
+        occupied_voxel_coords_f = occupied_voxel_coords.float()
 
-            ### Step 4: Find the minimum distance and the corresponding nearest occupied voxel for each query point ###
-            min_distances, _ = distances.min(dim=1)  ### Shape (M,)
+        for q_start in range(0, num_queries, q_batch):
+            q_end = min(q_start + q_batch, num_queries)
+            q_chunk = query_points_f[q_start:q_end]
+            chunk_min = torch.full(
+                (q_chunk.shape[0],),
+                float("inf"),
+                device=query_points.device,
+                dtype=torch.float32,
+            )
+            for o_start in range(0, num_occupied, o_batch):
+                o_end = min(o_start + o_batch, num_occupied)
+                o_chunk = occupied_voxel_coords_f[o_start:o_end]
+                dist = torch.norm(
+                    q_chunk.unsqueeze(1) - o_chunk.unsqueeze(0),
+                    dim=2,
+                )
+                chunk_min = torch.minimum(chunk_min, dist.min(dim=1)[0])
+            min_distances[q_start:q_end] = chunk_min
 
-        ### Step 5: find the indices for truncated free region and neglected free regions ###
         valid_free_indices_mask = (min_distances * self.voxel_size) > dist_thre
         truncated_free_indices = query_points[valid_free_indices_mask]
         neglected_free_indices = query_points[~valid_free_indices_mask]
