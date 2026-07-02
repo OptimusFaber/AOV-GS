@@ -48,6 +48,21 @@ from src.visualization import init_visualizer
 from src.semantic import CLIPEncoder, OpenVocabIndex
 
 
+def _slam_num_gaussians(slam):
+    """Return current Gaussian count from SLAM params, or None if unavailable."""
+    params = getattr(slam, "params", None)
+    if params is None or "means3D" not in params:
+        return None
+    return int(params["means3D"].shape[0])
+
+
+def _stop_sam_clip_extractor(extractor, info_printer, step_1based, reason):
+    """Flush and stop SAM+CLIP worker; return (None, stats)."""
+    info_printer(reason, step_1based, "SAM+CLIP")
+    info_printer("Flushing SAM+CLIP queue...", step_1based, "SAM+CLIP")
+    extractor.flush()
+    extractor.stop(wait=True, drain=True)
+    return None, extractor.stats()
 
 
 if __name__ == "__main__":
@@ -111,6 +126,10 @@ if __name__ == "__main__":
     sam_clip_extractor = None
     sam_clip_stats_snapshot = None
     _save_clip = getattr(main_cfg.slam, 'save_clip_features', False)
+    _sam_clip_kf_stride = max(1, int(getattr(main_cfg.slam, 'save_clip_every_kf', 1)))
+    _save_clip_max_step = getattr(main_cfg.slam, 'save_clip_max_step', None)
+    if _save_clip_max_step is not None:
+        _save_clip_max_step = int(_save_clip_max_step)
     _disable_sam_clip_env = os.getenv("ACTIVESGM_DISABLE_SAM_CLIP", "0").strip().lower() in ("1", "true", "yes", "on")
     if _disable_sam_clip_env and _save_clip:
         info_printer(
@@ -159,6 +178,16 @@ if __name__ == "__main__":
             f"SAM+CLIP extractor started → {_lang_feat_dir}",
             0, "Initialization"
         )
+        if _sam_clip_kf_stride > 1:
+            info_printer(
+                f"SAM+CLIP keyframe stride enabled: every {_sam_clip_kf_stride}th keyframe.",
+                0, "Initialization"
+            )
+        if _save_clip_max_step is not None:
+            info_printer(
+                f"SAM+CLIP embedding collection stops at step {_save_clip_max_step}.",
+                0, "Initialization"
+            )
         if _debug_seg_dir is not None:
             info_printer(
                 f"Debug mode: SAM masks will be saved to {_debug_seg_dir}",
@@ -230,9 +259,20 @@ if __name__ == "__main__":
     ### Run ActiveLang
     ##################################################
     ## load initial pose and convert from RUB to RDF (splatam)) ##
-    c2w_slam = planner.load_init_pose() # RUB
-    c2w_slam[:3, 1] *= -1
-    c2w_slam[:3, 2] *= -1 # RDF
+    c2w_slam = planner.load_init_pose()
+    # Legacy configs store start pose in Habitat RUB.
+    # Set slam.start_c2w_is_rdf=True explicitly only when start_c2w is already RDF.
+    start_pose_is_rdf = bool(getattr(main_cfg.slam, "start_c2w_is_rdf", False))
+    if not start_pose_is_rdf:
+        c2w_slam[:3, 1] *= -1
+        c2w_slam[:3, 2] *= -1  # RUB -> RDF
+
+    # NOTE: do NOT re-roll / re-level the start pose here. The SLAM origin, the
+    # planner horizon reference (``_horizon_R_init`` == c2w_slam_init) and the NVS
+    # eval anchor (``_eval_train_start_c2w_rdf``) must all reference the SAME start
+    # pose. Any artificial roll here desynced the eval anchor from the map and
+    # produced a mirrored viewpoint in eval_exploration_stage plots. Keep the
+    # robot's chosen start pose exactly as-is.
     c2w_slam_init = c2w_slam.clone() # RDF
 
     # Make the initial pose available to the planner for goal-pose conversion
@@ -316,10 +356,10 @@ if __name__ == "__main__":
             "active_lang", "active_gs", "active_gsv2",
             "active_gs_hybrid", "active_gs_hybrid_v3",
         ]:
-            ## convert back to RUB (habitat) ##
-            c2w_sim = c2w_slam.cpu().numpy().copy() # RDF
-            c2w_sim[:3, 1] *= -1 
-            c2w_sim[:3, 2] *= -1 # RUB
+            ## Absolute RDF (SplaTAM world) -> Habitat camera RUB
+            c2w_sim = c2w_slam.detach().cpu().numpy().copy()
+            c2w_sim[:3, 1] *= -1
+            c2w_sim[:3, 2] *= -1
         else:
             raise NotImplementedError
 
@@ -378,6 +418,10 @@ if __name__ == "__main__":
         )
         timer.end(slam_state)
 
+        _n_gs = _slam_num_gaussians(slam)
+        if _n_gs is not None:
+            info_printer(f"Gaussians: {_n_gs:,}", i + 1, "SLAM")
+
         if main_cfg.planner.method == "predefined_traj":
             exploration_path_poses.append(np.asarray(c2w_sim, dtype=np.float64).copy())
 
@@ -395,9 +439,13 @@ if __name__ == "__main__":
                 for kf in slam.keyframe_list[_prev_kf_count:]:
                     kf_id = kf['id']
                     # Submit frame to SAM+CLIP extractor
-                    if sam_clip_extractor is not None:
-                        kf_color_hwc = kf['color'].permute(1, 2, 0)  # (H,W,3)
-                        sam_clip_extractor.submit(kf_id, kf_color_hwc)
+                    _clip_collecting = (
+                        _save_clip_max_step is None or (i + 1) < _save_clip_max_step
+                    )
+                    if sam_clip_extractor is not None and _clip_collecting:
+                        if (kf_id % _sam_clip_kf_stride) == 0:
+                            kf_color_hwc = kf['color'].permute(1, 2, 0)  # (H,W,3)
+                            sam_clip_extractor.submit(kf_id, kf_color_hwc)
                     # Store w2c pose for later export
                     if _save_kf_poses:
                         w2c_mat = kf['est_w2c'].detach().cpu().numpy().tolist()
@@ -412,6 +460,20 @@ if __name__ == "__main__":
                             cv2.cvtColor(kf_np, cv2.COLOR_RGB2BGR),
                         )
             info_printer._prev_kf_count = _curr_kf_count
+
+        if (
+            sam_clip_extractor is not None
+            and _save_clip_max_step is not None
+            and (i + 1) >= _save_clip_max_step
+        ):
+            sam_clip_extractor, _stats = _stop_sam_clip_extractor(
+                sam_clip_extractor,
+                info_printer,
+                i + 1,
+                f"Reached step limit {_save_clip_max_step} — stopping SAM+CLIP embedding collection.",
+            )
+            if _stats is not None:
+                sam_clip_stats_snapshot = _stats
 
         #################################################
         ## save data for comprehensive visualization
@@ -467,19 +529,15 @@ if __name__ == "__main__":
             # completely free before the heavier 60-iter refinement SLAM starts.
             ##################################################
             if sam_clip_extractor is not None and planner.planning_state != "exploration":
-                info_printer(
+                sam_clip_extractor, _stats = _stop_sam_clip_extractor(
+                    sam_clip_extractor,
+                    info_printer,
+                    i + 1,
                     f"Exploration done — cleanly stopping SAM+CLIP extractor "
                     f"(state: {planner.planning_state}).",
-                    i + 1, "SAM+CLIP"
                 )
-                info_printer(
-                    "Flushing SAM+CLIP queue to avoid losing pending keyframes...",
-                    i + 1, "SAM+CLIP"
-                )
-                sam_clip_extractor.flush()
-                sam_clip_extractor.stop(wait=True, drain=True)
-                sam_clip_stats_snapshot = sam_clip_extractor.stats()
-                sam_clip_extractor = None
+                if _stats is not None:
+                    sam_clip_stats_snapshot = _stats
 
             if planner.planning_state in ["refinement", "post_refinement"]:
                 # Refinement only optimises existing Gaussians — disable additions to
@@ -524,6 +582,30 @@ if __name__ == "__main__":
                         scene_name=main_cfg.general.scene,
                         run_tag=f"{os.path.basename(os.path.normpath(main_cfg.dirs.result_dir))}_{_active_stage}",
                     )
+                    _explr = getattr(slam, "explr_map", None)
+                    if _explr is not None and hasattr(_explr, "occupancy_grid"):
+                        _grid = _explr.occupancy_grid
+                        _total = int(_grid.numel())
+                        _unexp = int((_grid == 0).sum().item())
+                        _free = int((_grid == -1.0).sum().item())
+                        _occ = int((_grid == 1.0).sum().item())
+                        _explored = _total - _unexp
+                        _occ_stats = {
+                            "stage": _active_stage,
+                            "step": i + 1,
+                            "total_voxels": _total,
+                            "unexplored_voxels": _unexp,
+                            "free_voxels": _free,
+                            "occupied_voxels": _occ,
+                            "explored_voxels": _explored,
+                            "coverage_pct": round(100.0 * _explored / max(_total, 1), 4),
+                        }
+                        with open(
+                            os.path.join(_stage_dir, "occupancy_stats.json"),
+                            "w",
+                            encoding="utf-8",
+                        ) as _sf:
+                            json.dump(_occ_stats, _sf, indent=2)
 
                 _active_stage = _new_stage
                 _active_stage_start_t = time.time()
