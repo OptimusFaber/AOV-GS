@@ -32,7 +32,7 @@ seeds=("${seeds[@]:0:$num_run}")
 ##################################################
 # scenes=(room0 room1 room2 office0 office1 office2 office3 office4)
 # scenes=( GdvgFV5R1Z5 gZ6f7yhEvPG HxpKQynjfin pLe4wQe7qrG YmJkqBEsHnH )
-scenes=( GdvgFV5R1Z5 gZ6f7yhEvPG HxpKQynjfin )
+scenes=( GdvgFV5R1Z5 gZ6f7yhEvPG HxpKQynjfin pLe4wQe7qrG YmJkqBEsHnH )
 # Check if the input argument is 'all'
 if [ "$scene" == "all" ]; then
     selected_scenes=${scenes[@]} # Copy all scenes

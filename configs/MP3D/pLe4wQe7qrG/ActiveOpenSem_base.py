@@ -6,6 +6,7 @@ Prerequisites:
   - data/mp3d_sim_nvs_v2/pLe4wQe7qrG/ (optional NVS eval frames)
 
 Run:
+  bash scripts/aov-gs/01_slam_exploration_mp3d.sh pLe4wQe7qrG ActiveOpenSemGeom
   bash scripts/aov-gs/01_slam_exploration_mp3d.sh pLe4wQe7qrG ActiveOpenSem
 """
 
@@ -45,7 +46,7 @@ if slam["method"] == "splatam":
         bbox_bound=[[-2.4, 9.2], [-3.8, 3.9], [-0.2, 10.5]],
         bbox_voxel_size=0.05,
         surface_dist_thre=0.3,
-        find_free_indices_bs=1000,
+        find_free_indices_bs=256,
         refine_map_iter=60,
         use_global_keyframe=True,
         global_keyframe=dict(

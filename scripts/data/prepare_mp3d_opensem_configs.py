@@ -127,7 +127,7 @@ if slam["method"] == "splatam":
         bbox_bound={bbox},
         bbox_voxel_size=0.05,
         surface_dist_thre={surface},
-        find_free_indices_bs=1000,
+        find_free_indices_bs=256,
         refine_map_iter=60,
         use_global_keyframe=True,
         global_keyframe=dict(
@@ -220,7 +220,7 @@ Results: results/MP3D/{scene}/ActiveGeom/run_N/
 
 Run:
     bash scripts/aov-gs/01_slam_exploration_mp3d.sh {scene} ActiveOpenSemGeom
-    bash scripts/activesgm/run_mp3d.sh {scene} 1 ActiveOpenSemGeom
+    bash scripts/activesgm/run_mp3d_geom.sh {scene}
 """
 
 import os
@@ -234,6 +234,14 @@ dirs["result_dir"] = os.path.join("results", general["dataset"], general["scene"
 
 # Geometry baseline: ActiveGSPlanner (not hybrid v3).
 planner["method"] = "active_gs"
+planner["force_post_refinement_at_step"] = 4800
+# Geometry uses SAM+CLIP only for embedding-bank collection.
+slam["save_clip_features"] = True
+slam["save_clip_every_kf"] = 3
+slam["save_clip_max_step"] = 4000
+sam_clip["queue_size"] = 2
+sam_clip["clip_batch_size"] = 16
+sam_clip["max_masks_per_frame"] = 48
 
 visualizer["vis_rgbd"] = False
 slam["override"]["viz"] = dict(enter_interactive_post_online=False, visualize_cams=False)

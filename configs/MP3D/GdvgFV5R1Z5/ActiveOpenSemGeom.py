@@ -18,6 +18,14 @@ dirs["result_dir"] = os.path.join("results", general["dataset"], general["scene"
 
 # Geometry baseline: ActiveGSPlanner (not hybrid v3).
 planner["method"] = "active_gs"
+planner["force_post_refinement_at_step"] = 4800
+# Geometry uses SAM+CLIP only for embedding-bank collection.
+slam["save_clip_features"] = True
+slam["save_clip_every_kf"] = 3
+slam["save_clip_max_step"] = 4000
+sam_clip["queue_size"] = 2
+sam_clip["clip_batch_size"] = 16
+sam_clip["max_masks_per_frame"] = 48
 
 visualizer["vis_rgbd"] = False
 slam["override"]["viz"] = dict(enter_interactive_post_online=False, visualize_cams=False)
