@@ -35,7 +35,11 @@ from typing import Tuple, Union, Dict, Optional
 from src.planner.planner import sanitize_pose_c2w
 from src.layers.erp_conversions import ERPDepth2Dist
 from src.simulator.simulator import Simulator
-from src.simulator.habitat_utils import make_configuration, simulate_objects
+from src.simulator.habitat_utils import (
+    make_configuration,
+    rub_c2w_to_habitat_agent,
+    simulate_objects,
+)
 from src.utils.general_utils import InfoPrinter, apply_colormap, create_class_colormap
 
 
@@ -67,13 +71,22 @@ class HabitatSim(Simulator):
         super(HabitatSim, self).__init__(main_cfg, info_printer)
 
         cfg = mmengine.Config.fromfile(self.sim_cfg.habitat_cfg)
-        # Row 0 = image top (OpenCV / segmentation). Legacy: flip_pinhole_vertical.
+        # ScanNet: bake OpenCV row order into the pinhole sensor (Rx(pi)), not a post-flip.
+        self._opencv_native_sensor = bool(cfg.simulator.get("opencv_native_sensor", False))
+        # Legacy Replica path: flip tensors after read when pinhole_vertical_flip=True.
         self._pinhole_vertical_flip = bool(
             cfg.simulator.get(
                 "pinhole_vertical_flip",
                 cfg.simulator.get("flip_pinhole_vertical", False),
             )
         )
+        if self._opencv_native_sensor and self._pinhole_vertical_flip:
+            info_printer(
+                "opencv_native_sensor=True disables pinhole_vertical_flip (avoid double flip).",
+                0,
+                self.__class__.__name__,
+            )
+            self._pinhole_vertical_flip = False
 
         if disable_erp:
             cfg.camera.equirectangular.enable = False
@@ -211,8 +224,12 @@ class HabitatSim(Simulator):
         ### simulate agent motion ###
         next_state = habitat_sim.agent.AgentState()
         
-        qut = quaternion.from_rotation_matrix(c2w[:3, :3])
-        trans = c2w[:3, 3]
+        agent_c2w = rub_c2w_to_habitat_agent(
+            c2w,
+            opencv_native_sensor=self._opencv_native_sensor,
+        )
+        qut = quaternion.from_rotation_matrix(agent_c2w[:3, :3])
+        trans = agent_c2w[:3, 3]
         next_state.position = trans
         next_state.rotation = qut
         
@@ -417,8 +434,12 @@ class HabitatSimV2(HabitatSim):
         self._last_valid_c2w = c2w.copy()
         next_state = habitat_sim.agent.AgentState()
 
-        qut = quaternion.from_rotation_matrix(c2w[:3, :3])
-        trans = c2w[:3, 3]
+        agent_c2w = rub_c2w_to_habitat_agent(
+            c2w,
+            opencv_native_sensor=self._opencv_native_sensor,
+        )
+        qut = quaternion.from_rotation_matrix(agent_c2w[:3, :3])
+        trans = agent_c2w[:3, 3]
         next_state.position = trans
         next_state.rotation = qut
 

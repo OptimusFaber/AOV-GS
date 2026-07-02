@@ -35,6 +35,41 @@ from tqdm import tqdm
 from typing import List, Dict, Tuple, Union
 import _magnum
 
+# Habitat agent/sensor native frame: X right, Y up, Z backward (RUB).
+# SplaTAM / OpenCV camera frame: X right, Y down, Z forward (RDF).
+_RUB_RDF_T = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float64)
+
+
+def rub_to_rdf(c2w: np.ndarray) -> np.ndarray:
+    """Camera c2w: Habitat RUB -> SplaTAM RDF (negate camera Y and Z axes)."""
+    out = np.asarray(c2w, dtype=np.float64).copy()
+    out[:3, 1] *= -1.0
+    out[:3, 2] *= -1.0
+    return out
+
+
+def rdf_to_rub(c2w: np.ndarray) -> np.ndarray:
+    """Camera c2w: SplaTAM RDF -> Habitat RUB."""
+    return rub_to_rdf(c2w)
+
+
+def rub_c2w_to_habitat_agent(c2w_rub: np.ndarray, *, opencv_native_sensor: bool) -> np.ndarray:
+    """External camera c2w (RUB) -> Habitat agent root pose before sensor offset."""
+    c2w = np.asarray(c2w_rub, dtype=np.float64)
+    if opencv_native_sensor:
+        # Pinhole sensor carries Rx(pi); camera_c2w = agent_c2w @ Rx(pi).
+        return c2w @ _RUB_RDF_T
+    return c2w
+
+
+def habitat_agent_to_rub_c2w(agent_c2w: np.ndarray, *, opencv_native_sensor: bool) -> np.ndarray:
+    """Habitat agent root pose -> external camera c2w (RUB)."""
+    c2w = np.asarray(agent_c2w, dtype=np.float64)
+    if opencv_native_sensor:
+        return c2w @ _RUB_RDF_T
+    return c2w
+
+
 def init_camera_spec(
         cam_cfg    : mmengine.ConfigDict,
         cam_id     : str,
@@ -98,7 +133,9 @@ def setup_pinhole_cams(cam_cfg: mmengine.ConfigDict) -> List[habitat_sim.CameraS
     Returns:
         cam_specs (List[habitat_sim.CameraSensorSpec]): camera specs
     """
-    
+    opencv_native = bool(cam_cfg.get("opencv_native_sensor", False))
+    pitch_offset = float(np.pi if opencv_native else cam_cfg.get("opencv_pitch_offset", 0.0))
+
     ### initialize orientation ###
     orientations = {}
     if cam_cfg.orientation_type == 'skybox':
@@ -123,6 +160,8 @@ def setup_pinhole_cams(cam_cfg: mmengine.ConfigDict) -> List[habitat_sim.CameraS
     ### setup camera specs ###
     sensor_specs = []
     for ori_key, orientation in orientations.items():
+        if pitch_offset != 0.0:
+            orientation = [orientation[0] + pitch_offset, orientation[1], orientation[2]]
         ### RGBA Camera ###
         if 'color' in cam_cfg.cam_type:
             cam_spec = init_camera_spec(
@@ -206,6 +245,25 @@ def setup_equirectangular_cams(cam_cfg: mmengine.ConfigDict) -> List[habitat_sim
     return sensor_specs
 
 
+def habitat_gpu_device_id() -> int:
+    """Habitat-Sim EGL/CUDA device index in the **current** process.
+
+    ``CUDA_VISIBLE_DEVICES=1`` masks to one GPU; PyTorch uses ``cuda:0``, Habitat
+    must use ``gpu_device_id=0`` as well — not the physical index from the env var
+    (else: "unable to find EGL device for CUDA device 1").
+    """
+    explicit = os.environ.get("HABITAT_GPU_DEVICE_ID", "").strip()
+    if explicit.isdigit():
+        return int(explicit)
+    cuda_vis = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not cuda_vis:
+        return 0
+    if "," not in cuda_vis:
+        return 0
+    first = cuda_vis.split(",")[0].strip()
+    return int(first) if first.isdigit() else 0
+
+
 def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configuration:
     """ Create Simulation Configuration
 
@@ -218,8 +276,7 @@ def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configurat
     ### simulator configuration ###
     backend_cfg = habitat_sim.SimulatorConfiguration()
     backend_cfg.scene_id = cfg.simulator.scene_id
-    gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
-    backend_cfg.gpu_device_id = int(gpu_id) if gpu_id.isdigit() else 0
+    backend_cfg.gpu_device_id = habitat_gpu_device_id()
     # Prebuilt conda habitat-sim 0.2.x can crash in PTexMeshShader (geometry shader link).
     # Force mesh_semantic.ply when cfg or HABITAT_USE_MESH_PLY=1 (set in Docker entrypoint only).
     use_mesh_ply = bool(cfg.simulator.get("use_mesh_ply", False))
@@ -290,6 +347,8 @@ def make_configuration(cfg: mmengine.Config) -> habitat_sim.simulator.Configurat
     ##################################################
     sensor_specs = []
     if 'pinhole' in cfg.camera and cfg.camera.pinhole.enable:
+        if cfg.simulator.get("opencv_native_sensor", False):
+            cfg.camera.pinhole.opencv_native_sensor = True
         sensor_specs += setup_pinhole_cams(cfg.camera.pinhole)
     
     if 'equirectangular' in cfg.camera and cfg.camera.equirectangular.enable:
@@ -389,45 +448,12 @@ def place_agent(
 
 
 def SixDOFPose2Mat(state: habitat_sim.SixDOFPose) -> np.ndarray:
-    """
+    """Habitat sensor pose -> camera c2w in SplaTAM RDF."""
 
-    Args:
-        state (habitat_sim.SixDOFPose): camera-to-world
-        
-    Returns:
-        pose (np.ndarray, [4,4]): camera to world
-        
-    """
-
-    ''' 
-        coordinate system transformation for camera pose
-
-        current system: [X: right; Y: up; Z: backward] 
-        desired system: [X: right; Y: down; Z: forward]
-
-        let the desired pose be T_w'c' (camera'-to-world')
-        the current pose be T_wc
-
-        T_w'c'  = T_w'w @ T_wc @ T_cc' 
-                = T_r @ T_wc @ (T_r)^-1
-                where T_r = [
-                    1, 0, 0,  0
-                    0, -1, 0, 0
-                    0, 0, -1, 0
-                    0, 0, 0,  1
-                ]
-
-    '''
     pose = np.eye(4)
     pose[:3, 3] = state.position
-    pose[:3,:3] = quaternion.as_rotation_matrix(state.rotation)
-
-    T = np.eye(4)
-    T[1,1] = -1
-    T[2,2] = -1
-
-    pose = T @ (pose @ np.linalg.inv(T))
-    return pose
+    pose[:3, :3] = quaternion.as_rotation_matrix(state.rotation)
+    return rub_to_rdf(pose)
 
 
 def simulate_objects(
@@ -620,16 +646,15 @@ def agent_motion_simulation(
         next_state.position = agent.get_state().position + np.array([0.0, 0.0, - timestamp * shift_radius])
     elif motion_type == 'predefined':
         traj_txt = agent_cfg.motion_profile.predefined_traj_txt
+        opencv_native = bool(agent_cfg.get("opencv_native_sensor", False))
         with open(traj_txt, 'r') as f:
             ### read pose ###
             line = f.readlines()[cnt]
             c2w = np.array(list(map(float, line.split()))).reshape(4, 4) # RDF, c2w
 
-            ### convert pose from RDF to RUB ###
-            T = np.eye(4)
-            T[1,1] = -1.
-            T[2,2] = -1.
-            c2w = T @  ( c2w @ np.linalg.inv(T) ) # RUB, c2w
+            ### convert pose from RDF to RUB (camera c2w) ###
+            c2w = rdf_to_rub(c2w)
+            c2w = rub_c2w_to_habitat_agent(c2w, opencv_native_sensor=opencv_native)
 
             ### convert pose from matrix to quaternion ###
             qut = quaternion.from_rotation_matrix(c2w[:3, :3])
@@ -657,6 +682,8 @@ def simulate(
         poses (List[Dict])       : sensor poses
     """
     agent_cfg = cfg.agent
+    if cfg.simulator.get("opencv_native_sensor", False):
+        agent_cfg.opencv_native_sensor = True
     sim_cfg = cfg.simulator
     dt = sim_cfg.duration
     FPS = sim_cfg.FPS
@@ -695,14 +722,11 @@ def simulate(
 
 
 def get_pinhole_intrinsic(sim: habitat_sim.Simulator) -> np.ndarray:
-    """ get Pinhole camera intrinsics
+    """Return OpenCV-style pinhole K for the live Habitat renderer.
 
-    Args:
-        sim (habitat_sim.Simulator)
-
-    Returns:
-        K (np.ndarray, [3,3]): pinhole camera intrinsics        
-
+    Uses the sensor projection matrix (same rays as RGB/depth). For ScanNet
+    configs with separate vfov/hfov, fx and fy from this call are authoritative;
+    do not substitute fy from raw ``.sens`` intrinsics into SplaTAM.
     """
     pinhole_sensor = [i for i in sim.agents[0]._sensors.keys()][0]
     K_gl = sim.agents[0]._sensors[pinhole_sensor].render_camera.projection_matrix
