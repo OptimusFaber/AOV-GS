@@ -1,81 +1,65 @@
-# Docker для AOV-GS
+# Docker for AOV-GS
 
-См. также: [корневой README](../README.md), [установка conda](../scripts/installation/README.md), [пайплайн](../scripts/aov-gs/README.md).
+Image: **CUDA 11.7**, Python 3.8, PyTorch 1.13.1+cu117, Habitat EGL, tiny-cuda-nn, diff-gaussian, SAM/CLIP.  
+Conda env inside the image: **`aov-gs`** (Miniforge).
 
-Образ: **CUDA 11.7**, Python 3.8, PyTorch 1.13.1+cu117, Habitat, tiny-cuda-nn, diff-gaussian, SAM/CLIP.  
-Conda: **Miniforge** (conda-forge), без Anaconda ToS. PyTorch через pip.
+See also: [root README](../README.md), [conda setup](../scripts/installation/README.md), [pipeline](../scripts/aov-gs/README.md).
 
-## Требования
+## Requirements
 
 - Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
-- `nvidia-smi` на хосте
-- ~15–25 GB для образа, сборка **1–2 ч** (интернет на машине **сборки**)
+- Host driver with **OpenGL/EGL** (not compute-only)
+- ~15–25 GB for the image; build takes **1–2 h** with network on the build machine
 
-## Сборка
+## Build
 
 ```bash
 cd AOV-GS
 
-# (опционально) wheels для pytorch3d/PyG — если Meta CDN тормозит
+# optional: cache pytorch3d / PyG wheels if Meta CDN is slow
 bash docker/wheels/download_wheels.sh
 
-# обычная
 bash docker/build.sh
 
-# с прокси (на машине где есть доступ)
-HTTP_PROXY=http://USER:PASS@HOST:3128 \
-HTTPS_PROXY=http://USER:PASS@HOST:3128 \
-bash docker/build.sh
+# proxy
+HTTP_PROXY=http://USER:PASS@HOST:3128 HTTPS_PROXY=http://USER:PASS@HOST:3128 bash docker/build.sh
 
-# только OpenSem/Hybrid (без ActiveSem channel rasterizers)
+# OpenSem only (skip ActiveSem channel rasterizers)
 BUILD_ACTIVESEM=0 bash docker/build.sh
 ```
 
-Или compose:
+Or: `docker compose -f docker/docker-compose.yml build`
 
-```bash
-docker compose -f docker/docker-compose.yml build
-```
-
-## Запуск
+## Run
 
 ```bash
 bash docker/run.sh
 
-# внутри контейнера уже active-sgm
-python -c "import torch; print(torch.cuda.is_available())"
-
-bash scripts/ablation/run_activesgm_benchmark.sh office0
-```
-
-Одной командой:
-
-```bash
+# one-shot command
 bash docker/run.sh python src/main/activesgm.py \
   --cfg configs/Replica/office0/ActiveOpenSem.py --seed 0 --enable_vis 0
 ```
 
-## Данные
+Inside the container the `aov-gs` conda env is already active. Repo is mounted at `/workspace/AOV-GS`; volumes persist `data/`, `results/`, `ckpts/`.
 
-Код монтируется с хоста (`./` → `/workspace/AOV-GS`).  
-Тома Docker: `data/`, `results/`, `ckpts/` (сохраняются между запусками).
+## Layout (what stays in `docker/`)
 
-Положи Replica data в `data/` на хосте или примонтируй свой путь в `docker-compose.yml`.
+| File | Role |
+|------|------|
+| `Dockerfile`, `build.sh`, `run.sh`, `docker-compose.yml` | build & launch |
+| `entrypoint.sh` | conda + Habitat EGL + `third_parties` bootstrap |
+| `ensure_habitat_egl.sh`, `nvidia_habitat_env.sh`, `habitat_mesa_fixup.sh` | headless Habitat EGL |
+| `bootstrap_third_parties.sh` | symlink deps into the mounted repo |
+| `install_pytorch3d_pyg.sh`, `wheels/` | build-time wheels |
+| `activate_env.sh`, `resolve_conda_env.sh` | manual `source` of conda inside/outside the image |
 
-## Перенос образа на cds2 без интернета
-
-На машине **со сборкой**:
+## Offline image transfer
 
 ```bash
+# build machine
 docker save aov-gs:cuda117 | gzip > aov-gs-cuda117.tar.gz
-scp aov-gs-cuda117.tar.gz user@cds2:~/
-```
 
-На **cds2**:
-
-```bash
+# target host
 docker load < aov-gs-cuda117.tar.gz
 cd AOV-GS && bash docker/run.sh
 ```
-
-Сборка env на cds2 **не нужна** — только Docker + GPU driver.

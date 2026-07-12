@@ -2,26 +2,45 @@
 
 **Exploring while Grounding: Open-Vocabulary Active Mapping with 3D Gaussian Splatting**
 
-Самостоятельный проект: активное исследование сцены (**SplaTAM**), сбор SAM+CLIP-признаков и **открытое языковое поле** (LangSplatV2 / legacy LangSplat).
+Standalone project: active scene exploration (**SplaTAM**), SAM+CLIP feature collection, and an **open language field** (LangSplatV2 / legacy LangSplat).
 
-Репозиторий: [github.com/OptimusFaber/AOV-GS](https://github.com/OptimusFaber/AOV-GS)
+Repository: [github.com/OptimusFaber/AOV-GS](https://github.com/OptimusFaber/AOV-GS)
+
+<p align="center">
+  <img src="assets/pipeline_overview.png" alt="AOV-GS pipeline overview" width="95%"/>
+</p>
+
+<p align="center"><em>Online active mapping (Habitat → SplaTAM → planner) and offline open-vocab language field.</em></p>
+
+<p align="center">
+  <img src="assets/mask_compare.png" alt="Language-field mask comparison" width="95%"/>
+</p>
+
+<p align="center"><em>Novel-view language masks: GT (green) · Geom-based (orange) · Passive (blue) · AOV-GS (yellow).</em></p>
+
+<p align="center">
+  <img src="assets/query_sofa.png" alt="Open-vocab query sofa" width="48%"/>
+  <img src="assets/gaussian_view.png" alt="Gaussian map render" width="48%"/>
+</p>
+
+<p align="center"><em>Left: text query <code>"a sofa"</code> (render / heatmap / GT / prediction). Right: RGB render from the Gaussian map.</em></p>
 
 ---
 
-## Содержание
+## Contents
 
-1. [Быстрый старт](#быстрый-старт)
-2. [Документация](#документация)
+1. [Quick start](#quick-start)
+2. [Documentation](#documentation)
 3. [`third_parties/`](#third_parties)
-4. [Основные команды](#основные-команды)
-5. [GPU и CUDA](#gpu-и-cuda)
-6. [NVS и валидация](#nvs-и-валидация)
-7. [Структура репозитория](#структура-репозитория)
-8. [Лицензии](#лицензии)
+4. [Main commands](#main-commands)
+5. [GPU and CUDA](#gpu-and-cuda)
+6. [NVS and validation](#nvs-and-validation)
+7. [Repository structure](#repository-structure)
+8. [Licenses](#licenses)
 
 ---
 
-## Быстрый старт
+## Quick start
 
 ```bash
 git clone --recursive https://github.com/OptimusFaber/AOV-GS
@@ -30,40 +49,50 @@ cd AOV-GS
 bash scripts/installation/quick_start.sh
 ```
 
-Скрипт `quick_start.sh` по шагам:
+The `quick_start.sh` script runs step by step:
 
-1. `third_parties/` — git submodules / авто-клон (~200 MB)
-2. conda-окружение `active-sgm` (~12 GB)
+1. `third_parties/` — git submodules / auto-clone (~200 MB)
+2. conda environment `aov-gs` (~12 GB)
 3. pip: open_clip, segment-anything, scikit-learn
-4. чекпойнт SAM → `ckpts/sam_vit_b_01ec64.pth` (~400 MB)
-5. данные Replica + Habitat + NVS
+4. SAM checkpoint → `ckpts/sam_vit_b_01ec64.pth` (~400 MB)
+5. Replica + Habitat + NVS data
 
-**Место на диске:** планируйте **≥ 30 GB** свободного (conda ~12 GB, Replica и производные данные ~7–17 GB, остальное ~1 GB).
+**Disk space:** plan for **≥ 30 GB** free (conda ~12 GB, Replica and derived data ~7–17 GB, remainder ~1 GB).
 
-Опции: `--skip-env`, `--skip-data`, `--skip-sam`, `--yes` (без подтверждения). Подробности: `bash scripts/installation/quick_start.sh --help`.
+Options: `--skip-env`, `--skip-data`, `--skip-sam`, `--yes` (no confirmation). Details: `bash scripts/installation/quick_start.sh --help`.
 
-Если клонировали **без** `--recursive`:
+**Docker** (alternative to local conda):
+
+```bash
+bash docker/build.sh
+bash docker/run.sh
+```
+
+Details: [docker/README.md](docker/README.md).
+
+If you cloned **without** `--recursive`:
 
 ```bash
 bash scripts/installation/setup_third_parties.sh
 ```
 
-После установки:
+After installation:
 
 ```bash
-conda activate active-sgm
-# дальше — scripts/aov-gs/README.md
+conda activate aov-gs
+# legacy: active-gs / active-sgm are also picked up by the scripts
+# next — scripts/aov-gs/README.md
 ```
 
 ---
 
-## Документация
+## Documentation
 
-| Тема | Файл |
+| Topic | File |
 |------|------|
-| Пайплайн 01–03, batch, **GPU** | [scripts/aov-gs/README.md](scripts/aov-gs/README.md) |
+| Pipeline 01–03, batch, **GPU** | [scripts/aov-gs/README.md](scripts/aov-gs/README.md) |
 | Conda, HPC, quick start | [scripts/installation/README.md](scripts/installation/README.md) |
-| Данные Replica / NVS | [scripts/data/README.md](scripts/data/README.md) |
+| Replica / NVS data | [scripts/data/README.md](scripts/data/README.md) |
 | `third_parties/` | [third_parties/README.md](third_parties/README.md) |
 | Docker | [docker/README.md](docker/README.md) |
 
@@ -71,19 +100,19 @@ conda activate active-sgm
 
 ## `third_parties/`
 
-Зависимости (~200 MB): Co-SLAM, SplaTAM, neural_slam_eval, channel rasterizers.
+Dependencies (~200 MB): Co-SLAM, SplaTAM, neural_slam_eval, channel rasterizers.
 
-**Не нужно** вручную копировать из других репозиториев:
+**No need** to copy manually from other repositories:
 
 ```bash
 git clone --recursive https://github.com/OptimusFaber/AOV-GS
-# или после обычного clone:
+# or after a regular clone:
 bash scripts/installation/setup_third_parties.sh
 ```
 
-**`habitat_sim`** (~5 GB) в git не хранится — ставится через conda (`build_sem.sh`).
+**`habitat_sim`** (~5 GB) is not stored in git — it is installed via conda (`build_sem.sh`).
 
-Проверка:
+Check:
 
 ```bash
 test -f third_parties/coslam/utils.py && \
@@ -92,46 +121,46 @@ test -f third_parties/splatam/utils/slam_external.py && echo OK
 
 ---
 
-## Основные команды
+## Main commands
 
-См. [scripts/aov-gs/README.md](scripts/aov-gs/README.md).
+See [scripts/aov-gs/README.md](scripts/aov-gs/README.md).
 
 ```bash
-# Полный open-vocab
+# Full open-vocab
 bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0
 
-# Пошагово
+# Step by step
 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0
 bash scripts/aov-gs/02_validate_features_langsplatv2.sh results/Replica/office0/ActiveOpenSem/run_0
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
   results/Replica/office0/ActiveOpenSem/run_0 64 s 30000 cuda:0 1 4 auto 1.0
 ```
 
-Результаты: `results/Replica/<scene>/<EXP>/run_N/`.
+Results: `results/Replica/<scene>/<EXP>/run_N/`.
 
 ---
 
-## GPU и CUDA
+## GPU and CUDA
 
-Краткая шпаргалка. Подробно: [scripts/aov-gs/README.md § GPU](scripts/aov-gs/README.md#gpu-и-cuda).
+Quick cheat sheet. Details: [scripts/aov-gs/README.md § GPU](scripts/aov-gs/README.md#gpu-and-cuda).
 
-| Что | Куда писать | Default |
+| What | Where to set | Default |
 |-----|-------------|---------|
-| Видимые GPU | `GPU` / `CUDA_VISIBLE_DEVICES` | `01_*.sh`: `GPU=0,1` |
-| SplaTAM | `primary_device` в `replica_splatam_s.py` | `cuda:0` |
-| SAM + CLIP | `sam_clip.device` в `ActiveOpenSem_base.py` | **`cuda:0`** |
-| Lang field train | `DEVICE` в `03_*.sh` | `cuda:0` |
-| Python-скрипты | `--device` | `cuda:0` |
+| Visible GPUs | `GPU` / `CUDA_VISIBLE_DEVICES` | `01_*.sh`: `GPU=0,1` |
+| SplaTAM | `primary_device` in `replica_splatam_s.py` | `cuda:0` |
+| SAM + CLIP | `sam_clip.device` in `ActiveOpenSem_base.py` | **`cuda:0`** |
+| Lang field train | `DEVICE` in `03_*.sh` | `cuda:0` |
+| Python scripts | `--device` | `cuda:0` |
 
-**Две GPU** (SLAM на 0, SAM на 1): в конфиге `sam_clip.device = "cuda:1"`, запуск `GPU=0,1 bash scripts/aov-gs/01_slam_exploration.sh ...`
+**Two GPUs** (SLAM on 0, SAM on 1): in the config set `sam_clip.device = "cuda:1"`, run `GPU=0,1 bash scripts/aov-gs/01_slam_exploration.sh ...`
 
-**Lang field на GPU 1:** `cuda:1` в аргументе `03_*.sh` (auto-remap через `_gpu_helpers.sh`).
+**Lang field on GPU 1:** pass `cuda:1` as the `03_*.sh` argument (auto-remap via `_gpu_helpers.sh`).
 
-Переопределение SAM без правки конфига: `SAM_CLIP_DEVICE=cuda:1`.
+Override SAM without editing the config: `SAM_CLIP_DEVICE=cuda:1`.
 
 ---
 
-## NVS и валидация
+## NVS and validation
 
 ```bash
 python scripts/run_nvs_validation.py \
@@ -148,19 +177,21 @@ python scripts/validate_lang_field_traj.py \
 
 ---
 
-## Структура репозитория
+## Repository structure
 
-| Путь | Назначение |
+| Path | Purpose |
 |------|------------|
+| `assets/` | README figures (pipeline, masks, query demo) |
 | `src/main/activesgm.py` | SLAM + SAM/CLIP |
-| `scripts/aov-gs/` | пайплайн 01–03 |
-| `scripts/installation/quick_start.sh` | установка «в один заход» |
+| `scripts/aov-gs/` | pipeline 01–03 |
+| `scripts/installation/quick_start.sh` | one-shot install |
+| `docker/` | CUDA 11.7 image — build & run |
 | `third_parties/` | vendored deps (submodules) |
-| `configs/Replica/<scene>/` | конфиги сцен |
+| `configs/Replica/<scene>/` | scene configs |
 
 ---
 
-## Лицензии
+## Licenses
 
-MIT — см. [LICENSE](LICENSE).  
-Сторонние компоненты (SplaTAM, Co-SLAM, Habitat и др.) — лицензии в соответствующих репозиториях / `third_parties/`.
+MIT — see [LICENSE](LICENSE).  
+Third-party components (SplaTAM, Co-SLAM, Habitat, etc.) — licenses in the respective repositories / `third_parties/`.

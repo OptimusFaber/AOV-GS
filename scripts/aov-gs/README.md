@@ -1,36 +1,36 @@
-# Скрипты пайплайна AOV-GS (`scripts/aov-gs/`)
+# AOV-GS pipeline scripts (`scripts/aov-gs/`)
 
-Оркестраторы open-vocabulary: SLAM → (опционально AE) → языковое поле.
-
----
-
-## Содержание
-
-1. [Быстрый запуск](#быстрый-запуск)
-2. [Этапы 01–03](#этапы-013)
-3. [Пайплайны-обёртки](#пайплайны-обёртки)
-4. [GPU и CUDA](#gpu-и-cuda)
-5. [Batch-скрипты](#batch-скрипты)
-6. [Выходные артефакты](#выходные-артефакты)
+Open-vocabulary orchestrators: SLAM → (optional AE) → language field.
 
 ---
 
-## Быстрый запуск
+## Contents
+
+1. [Quick run](#quick-run)
+2. [Stages 01–03](#stages-0103)
+3. [Wrapper pipelines](#wrapper-pipelines)
+4. [GPU and CUDA](#gpu-and-cuda)
+5. [Batch scripts](#batch-scripts)
+6. [Output artifacts](#output-artifacts)
+
+---
+
+## Quick run
 
 ```bash
 cd /path/to/AOV-GS
-conda activate active-sgm
+conda activate aov-gs
 
-# Полный open-vocab (LangSplatV2 + SAM)
+# Full open-vocab (LangSplatV2 + SAM)
 bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0
 
-# Только SLAM + SAM/CLIP
+# SLAM + SAM/CLIP only
 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0
 ```
 
 ---
 
-## Этапы 01–03
+## Stages 01–03
 
 ### 01 — SLAM + SAM/CLIP
 
@@ -39,30 +39,30 @@ bash scripts/aov-gs/01_slam_exploration.sh \
   [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]
 ```
 
-| Аргумент | Default | Описание |
+| Argument | Default | Description |
 |----------|---------|----------|
 | `SCENE` | `office0` | `office0`–`office4`, `room0`–`room2` |
 | `EXP` | `ActiveOpenSemGeom` | `ActiveOpenSem`, `ActiveGeom`, `Passive`, … |
 | `SEED` | `0` | random seed |
-| `ENABLE_VIS` | `0` | `0` headless, `1` OpenCV-окна |
-| `DEBUG` | `0` | `1` → JPEG в `keyframes/` |
+| `ENABLE_VIS` | `0` | `0` headless, `1` OpenCV windows |
+| `DEBUG` | `0` | `1` → JPEG under `keyframes/` |
 | `RESULT_RUN` | *(auto)* | `run_0`, `run_1`, … |
-| `MASK_COLLECTOR` | `sam` | `sam` или `corrclip` |
+| `MASK_COLLECTOR` | `sam` | `sam` or `corrclip` |
 
-Примеры:
+Examples:
 
 ```bash
-# ActiveOpenSem, headless, авто run_N
+# ActiveOpenSem, headless, auto run_N
 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0
 
-# Фиксированная папка + CorrCLIP
+# Fixed folder + CorrCLIP
 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem 0 0 0 run_corrclip corrclip
 
-# Эквивалент CorrCLIP (явный скрипт)
+# Equivalent CorrCLIP (explicit script)
 bash scripts/aov-gs/01_slam_exploration_with_corr_clip.sh office0 ActiveOpenSem 0 0 0 run_corrclip
 ```
 
-Прямой Python:
+Direct Python:
 
 ```bash
 python src/main/activesgm.py \
@@ -71,13 +71,13 @@ python src/main/activesgm.py \
   --result_dir results/Replica/office0/ActiveOpenSem/run_0
 ```
 
-### 02 — LangSplatV2: проверка фич
+### 02 — LangSplatV2: feature validation
 
 ```bash
 bash scripts/aov-gs/02_validate_features_langsplatv2.sh results/Replica/office0/ActiveOpenSem/run_0
 ```
 
-### 02 — LangSplat (legacy): автоэнкодер
+### 02 — LangSplat (legacy): autoencoder
 
 ```bash
 bash scripts/aov-gs/02_train_clip_autoencoder.sh \
@@ -85,20 +85,20 @@ bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 # LATENT_DIM=64, EPOCHS=100, DEVICE=cuda:0
 ```
 
-### 03 — языковое поле
+### 03 — language field
 
-**LangSplatV2** (рекомендуется):
+**LangSplatV2** (recommended):
 
 ```bash
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
   RESULT_DIR K LEVEL NUM_ITERS DEVICE L TOPK RENDER_CKPT TRAIN_DOWNSCALE
 
-# Пример:
+# Example:
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
   results/Replica/office0/ActiveOpenSem/run_0 64 s 30000 cuda:0 1 4 auto 1.0
 ```
 
-Все уровни SAM (`s`, `m`, `l`):
+All SAM levels (`s`, `m`, `l`):
 
 ```bash
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2_all_levels.sh RESULT_DIR K NUM_ITERS
@@ -113,12 +113,12 @@ bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 
 ---
 
-## Пайплайны-обёртки
+## Wrapper pipelines
 
-| Скрипт | Конфиг | Описание |
+| Script | Config | Description |
 |--------|--------|----------|
 | `pipeline_gs_open_vocab.sh` | `ActiveOpenSem` | unified: SAM/CorrCLIP + LangSplat(V2) |
-| `pipeline_gs_no_segmenter.sh` | `ActiveGS` | только геометрия |
+| `pipeline_gs_no_segmenter.sh` | `ActiveGS` | geometry only |
 | `pipeline_gs_oneformer.sh` | `ActiveSem` | OneFormer (closed-set) |
 | `pipeline_gs_langsplatv2.sh` | `ActiveOpenSem` | 01 → 02 validate → 03 V2 |
 | `pipeline_gs_langsplat.sh` | `ActiveOpenSem` | 01 → 02 AE → 03 legacy |
@@ -135,81 +135,81 @@ bash scripts/aov-gs/pipeline_gs_open_vocab.sh office0 0 0 0 corrclip langsplatv2
 
 ---
 
-## GPU и CUDA
+## GPU and CUDA
 
-### Сводка: что куда писать
+### Summary: what to set where
 
-| Компонент | Где задать | Параметр | Default |
+| Component | Where to set | Parameter | Default |
 |-----------|------------|----------|---------|
-| **Видимые GPU** (shell) | env | `CUDA_VISIBLE_DEVICES` / `GPU` | `01_*.sh`: `GPU=0,1` |
-| **SplaTAM** | конфиг | `primary_device` в `configs/Replica/replica_splatam_s.py` | `cuda:0` |
-| **SAM + CLIP** | конфиг / env | `sam_clip.device` или `SAM_CLIP_DEVICE` | `cuda:0` |
-| **OneFormer** | конфиг | `semantic_device` в `ActiveSem.py` | `cuda:0` |
-| **Lang field train** | аргумент shell | `DEVICE` в `03_*.sh` | `cuda:0` |
-| **Python-скрипты** | CLI | `--device` | `cuda:0` |
-| **NVS eval** | конфиг | `primary_device` (+ `CUDA_VISIBLE_DEVICES`) | `cuda:0` |
+| **Visible GPUs** (shell) | env | `CUDA_VISIBLE_DEVICES` / `GPU` | `01_*.sh`: `GPU=0,1` |
+| **SplaTAM** | config | `primary_device` in `configs/Replica/replica_splatam_s.py` | `cuda:0` |
+| **SAM + CLIP** | config / env | `sam_clip.device` or `SAM_CLIP_DEVICE` | `cuda:0` |
+| **OneFormer** | config | `semantic_device` in `ActiveSem.py` | `cuda:0` |
+| **Lang field train** | shell argument | `DEVICE` in `03_*.sh` | `cuda:0` |
+| **Python scripts** | CLI | `--device` | `cuda:0` |
+| **NVS eval** | config | `primary_device` (+ `CUDA_VISIBLE_DEVICES`) | `cuda:0` |
 
-### Одна GPU
+### One GPU
 
 ```bash
 GPU=0 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
 ```
 
-По умолчанию SAM+CLIP на **`cuda:0`** (как и SplaTAM).
+By default SAM+CLIP runs on **`cuda:0`** (same as SplaTAM).
 
-### Две GPU: SLAM на 0, SAM/CLIP на 1
+### Two GPUs: SLAM on 0, SAM/CLIP on 1
 
-`01_slam_exploration.sh` по умолчанию: `GPU=0,1` → обе карты видны процессу.
+`01_slam_exploration.sh` by default: `GPU=0,1` → both cards are visible to the process.
 
-В конфиге:
+In the config:
 
 ```python
 # configs/Replica/replica_splatam_s.py
 primary_device = "cuda:0"
 
 # configs/Replica/<scene>/ActiveOpenSem_base.py
-sam_clip = dict(device = "cuda:1", ...)   # только при двух GPU
+sam_clip = dict(device = "cuda:1", ...)   # only with two GPUs
 ```
 
-Или без правки конфига: `SAM_CLIP_DEVICE=cuda:1`.
+Or without editing the config: `SAM_CLIP_DEVICE=cuda:1`.
 
-Запуск:
+Run:
 
 ```bash
 GPU=0,1 bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
 ```
 
-### Обучение language field на физической GPU 1
+### Training the language field on physical GPU 1
 
-`diff_gaussian_rasterization` видит только **logical `cuda:0`**. Shell-скрипты `03_*.sh` делают remapping через `_gpu_helpers.sh`:
+`diff_gaussian_rasterization` only sees **logical `cuda:0`**. The `03_*.sh` shell scripts remap via `_gpu_helpers.sh`:
 
 ```bash
-# Физическая GPU 1 → передать cuda:1 в аргумент DEVICE
+# Physical GPU 1 → pass cuda:1 as the DEVICE argument
 bash scripts/aov-gs/03_train_gaussian_lang_field_langsplatv2.sh \
   results/.../run_0 64 s 30000 cuda:1 1 4 auto 1.0
-# внутри: CUDA_VISIBLE_DEVICES=1, python --device cuda:0
+# inside: CUDA_VISIBLE_DEVICES=1, python --device cuda:0
 ```
 
-Вручную:
+Manually:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/train_language_field.py ... --device cuda:0
 ```
 
-**Не** запускайте `train_language_field.py --device cuda:1` без `CUDA_VISIBLE_DEVICES`.
+**Do not** run `train_language_field.py --device cuda:1` without `CUDA_VISIBLE_DEVICES`.
 
-### Python-скрипты с `--device`
+### Python scripts with `--device`
 
-| Скрипт | Назначение |
+| Script | Purpose |
 |--------|------------|
-| `validate_lang_field_traj.py` | mIoU на traj |
+| `validate_lang_field_traj.py` | mIoU on traj |
 | `compute_miou_p_traj.py` | mIoU_p (SAM pseudo) |
-| `query_language_field.py` | текстовый запрос |
-| `render_view_from_pose.py` | один кадр NVS |
-| `render_query_from_pose.py` | запрос + рендер |
-| `train_language_field.py` | обучение (см. remapping выше) |
+| `query_language_field.py` | text query |
+| `render_view_from_pose.py` | single NVS frame |
+| `render_query_from_pose.py` | query + render |
+| `train_language_field.py` | training (see remapping above) |
 
-Пример на GPU 1 без remapping (валидация, не rasterizer):
+Example on GPU 1 without remapping (validation, not the rasterizer):
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/validate_lang_field_traj.py \
@@ -220,42 +220,42 @@ CUDA_VISIBLE_DEVICES=1 python scripts/validate_lang_field_traj.py \
 
 ### VRAM / `--render_checkpoint`
 
-| Значение | Поведение |
+| Value | Behavior |
 |----------|-----------|
-| `off` | быстрее, больше VRAM |
-| `on` | gradient checkpoint, меньше VRAM |
-| `auto` | эвристика (default в `03_*.sh`) |
+| `off` | faster, more VRAM |
+| `on` | gradient checkpoint, less VRAM |
+| `auto` | heuristic (default in `03_*.sh`) |
 
-При OOM на этапе 3: `RENDER_CKPT=on` или уменьшить `TRAIN_DOWNSCALE` (например `0.5`).
+On OOM at stage 3: set `RENDER_CKPT=on` or reduce `TRAIN_DOWNSCALE` (e.g. `0.5`).
 
 ---
 
-## Batch-скрипты
+## Batch scripts
 
-| Скрипт | Env | Назначение |
+| Script | Env | Purpose |
 |--------|-----|------------|
-| `run_lang_field_batch_replica.sh` | `GPUS="0 1"` | обучение lang field на всех сценах |
+| `run_lang_field_batch_replica.sh` | `GPUS="0 1"` | train lang field on all scenes |
 | `run_lang_field_validate_batch.sh` | `GPUS`, `VALIDATE_SLOTS_PER_GPU=4` | batch mIoU |
 | `run_multiseed_geom_open_sem_all.sh` | `GPUS`, `GEOM_PER_GPU`, `OPEN_SEM_PER_GPU` | multiseed SLAM |
-| `run_active_geom_all_scenes.sh` | `GPU` | ActiveGeom по сценам |
-| `run_lang_field_full_grid.sh` | — | сетка AE (legacy) |
-| `run_lang_field_full_grid_langsplatv2.sh` | — | сетка V2 |
+| `run_active_geom_all_scenes.sh` | `GPU` | ActiveGeom across scenes |
+| `run_lang_field_full_grid.sh` | — | AE grid (legacy) |
+| `run_lang_field_full_grid_langsplatv2.sh` | — | V2 grid |
 
 ---
 
-## Выходные артефакты
+## Output artifacts
 
-После этапа 01 (`ActiveOpenSem`):
+After stage 01 (`ActiveOpenSem`):
 
 ```
 results/Replica/<scene>/ActiveOpenSem/run_N/
-├── splatam/final/params0.npz      # или params.npz
+├── splatam/final/params0.npz      # or params.npz
 ├── keyframe_poses.json
 ├── language_features/             # *_f.npy, *_s.npy
 └── main_cfg.json
 ```
 
-После этапа 03 (LangSplatV2):
+After stage 03 (LangSplatV2):
 
 ```
 lang_field_sk64_l1/lang_field.pt
