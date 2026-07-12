@@ -28,10 +28,14 @@ import os
 import re
 import time
 import sys
+import atexit
 sys.path.append(os.getcwd())
 
 from src.utils.display_utils import configure_headless_env
-from src.utils.exploration_path_plot import save_exploration_path_topdown
+from src.utils.exploration_path_plot import (
+    save_exploration_path_poses_json,
+    save_exploration_path_topdown,
+)
 
 configure_headless_env()
 from tensorboardX import SummaryWriter
@@ -65,17 +69,51 @@ def _stop_sam_clip_extractor(extractor, info_printer, step_1based, reason):
     return None, extractor.stats()
 
 
+def _run_log_label(main_cfg) -> str:
+    """Stdout banner for this run.
+
+    Use ``ActiveSGM`` only for ActiveSem / OneFormer baselines.
+    Open-vocabulary AOV-GS experiments (ActiveOpenSem*, …) log as ``AOV-GS``.
+    """
+    rd = str(getattr(getattr(main_cfg, "dirs", None), "result_dir", "") or "")
+    norm = rd.replace("\\", "/")
+    exp = ""
+    m = re.search(r"/(?:Replica|MP3D|ScanNet)/[^/]+/([^/]+)/", norm, flags=re.IGNORECASE)
+    if m:
+        exp = m.group(1)
+    else:
+        parts = [p for p in norm.split("/") if p and not p.startswith("run_")]
+        if parts:
+            exp = parts[-1]
+    low = exp.lower()
+    if low.startswith("activesem") or low in ("activesgm",):
+        return "ActiveSGM"
+    if low.startswith("activegeom") or low.startswith("activeopensemgeom"):
+        return "ActiveGeom"
+    if low.startswith("passive"):
+        return "Passive"
+    if (
+        low.startswith("activeopensem")
+        or low.startswith("activeopenvocab")
+        or "aov" in low
+    ):
+        return "AOV-GS"
+    slam = str(getattr(getattr(main_cfg, "slam", None), "method", "") or "").lower()
+    if "semsplat" in slam:
+        return "ActiveSGM"
+    return "AOV-GS"
+
+
 if __name__ == "__main__":
-    info_printer = InfoPrinter("ActiveSGM")
     timer = Timer()
 
     ##################################################
     ### argument parsing and load configuration
     ##################################################
-    info_printer("Parsing arguments...", 0, "Initialization")
     args = argument_parsing()
-    info_printer("Loading configuration...", 0, "Initialization")
     main_cfg = load_cfg(args)
+    info_printer = InfoPrinter(_run_log_label(main_cfg))
+    info_printer("Configuration loaded.", 0, "Initialization")
     info_printer(f"Result directory: {main_cfg.dirs.result_dir}", 0, "Initialization")
     # Save config to JSON (automatically cleans non-serializable objects)
     save_cfg_to_json(main_cfg, os.path.join(main_cfg.dirs.result_dir, 'main_cfg.json'))
@@ -335,6 +373,20 @@ if __name__ == "__main__":
     # Robot trajectory in Habitat RUB (for top-down path figure).
     exploration_path_poses: list = []
     last_valid_c2w_sim = None
+    _exploration_poses_run_tag = os.path.basename(os.path.normpath(main_cfg.dirs.result_dir))
+    _poses_save_every = max(1, int(os.environ.get("ACTIVESGM_POSES_SAVE_EVERY", "1")))
+
+    def _flush_exploration_poses_json() -> None:
+        if not exploration_path_poses:
+            return
+        save_exploration_path_poses_json(
+            exploration_path_poses,
+            main_cfg.dirs.result_dir,
+            scene_name=main_cfg.general.scene,
+            run_tag=_exploration_poses_run_tag,
+        )
+
+    atexit.register(_flush_exploration_poses_json)
 
     for i in range(main_cfg.general.num_iter):
     # for i in range(0, main_cfg.general.num_iter, 10):
@@ -424,6 +476,8 @@ if __name__ == "__main__":
 
         if main_cfg.planner.method == "predefined_traj":
             exploration_path_poses.append(np.asarray(c2w_sim, dtype=np.float64).copy())
+            if (i + 1) % _poses_save_every == 0:
+                _flush_exploration_poses_json()
 
         ##################################################
         ### Submit new keyframes to SAM+CLIP extractor
@@ -557,10 +611,20 @@ if __name__ == "__main__":
             _pose_rub[:3, 1] *= -1
             _pose_rub[:3, 2] *= -1
             exploration_path_poses.append(_pose_rub)
+            if (i + 1) % _poses_save_every == 0:
+                _flush_exploration_poses_json()
 
             # Stage transition bookkeeping (step + duration + VRAM) and per-stage path snapshots.
             _new_stage = _stage_label()
             if _new_stage != _active_stage:
+                if _active_stage == "exploration_stage_1":
+                    _flush_exploration_poses_json()
+                    info_printer(
+                        f"Exploration stage 1 done — checkpoint "
+                        f"exploration_path_poses.json ({len(exploration_path_poses)} poses)",
+                        i + 1,
+                        "Trajectory",
+                    )
                 _elapsed = time.time() - _active_stage_start_t
                 with open(stage_log_path, "a", encoding="utf-8") as _f:
                     _f.write(

@@ -2,17 +2,17 @@
 ##################################################
 # Step 1: SLAM exploration + SAM/CLIP extraction (CorrCLIP-style postproc **on**)
 #
-# Использует значения [sam_clip] из конфига (например corrclip_mask_merge,
-# corrclip_interclass_suppress_alpha в configs/Replica/office0/ActiveOpenSem_base.py).
-# Передаётся --corrclip 1 → cfg_loader оставляет [sam_clip] как в конфиге
-# (merge + inter-class suppression включены, если так задано в .py).
+# Uses [sam_clip] values from the config (e.g. corrclip_mask_merge,
+# corrclip_interclass_suppress_alpha in configs/Replica/office0/ActiveOpenSem_base.py).
+# Passes --corrclip 1 → cfg_loader keeps [sam_clip] as in the config
+# (merge + inter-class suppression enabled if set that way in .py).
 #
-# Для отключения CorrCLIP используйте scripts/aov-gs/01_slam_exploration.sh
+# To disable CorrCLIP use scripts/aov-gs/01_slam_exploration.sh
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/01_slam_exploration_with_corr_clip.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN]
 #
-# Примеры:
+# Examples:
 #   bash scripts/aov-gs/01_slam_exploration_with_corr_clip.sh
 #   bash scripts/aov-gs/01_slam_exploration_with_corr_clip.sh office0 ActiveOpenSem 0 0 0 run_corrclip
 ##################################################

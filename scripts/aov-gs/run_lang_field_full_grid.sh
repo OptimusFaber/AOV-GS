@@ -1,33 +1,33 @@
 #!/bin/bash
 ##################################################
-# Этап 3 — выборочная сетка + фиксированные волны параллелизма
+# Stage 3 — selective grid + fixed parallelism waves
 #
-# Итерации:
-#   D ∈ {3,4,8,16}  — все уровни s,m,l  →  NUM_ITERS=30000
-#   D ∈ {32,64}     — только уровень m   →  NUM_ITERS=20000
+# Iterations:
+#   D ∈ {3,4,8,16}  — all levels s,m,l  →  NUM_ITERS=30000
+#   D ∈ {32,64}     — level m only       →  NUM_ITERS=20000
 #
-# Волны (одна GPU; внутри волны — параллельно, wall-time = max по задачам):
+# Waves (one GPU; within a wave — parallel, wall-time = max over jobs):
 #   1) 4s 4m 4l 8s 8m
 #   2) 8l 16s 16m
 #   3) 3s 3m 3l 16l
 #   4) 32m
 #   5) 64m
 #
-# Логи лосса: в каждой output_dir пишется loss_{D}{level}.txt
-# (каждые LOG_EVERY итераций, по умолчанию 500) — см. train_language_field / LangSplatam.
+# Loss logs: each output_dir gets loss_{D}{level}.txt
+# (every LOG_EVERY iterations, default 500) — see train_language_field / LangSplatam.
 #
-# Использование:
+# Usage:
 #   cd New-Proj
 #   bash scripts/aov-gs/run_lang_field_full_grid.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0
 #
 # Env:
-#   NUM_ITERS_SMALL=30000   # для D=3,4,8,16
-#   NUM_ITERS_LARGE=20000   # для D=32,64
+#   NUM_ITERS_SMALL=30000   # for D=3,4,8,16
+#   NUM_ITERS_LARGE=20000   # for D=32,64
 #   LOG_EVERY=500
 #   DEVICE=cuda:0
 #   RENDER_CHECKPOINT=auto
-#   LOG_DIR=...             # логи stdout, default: RESULT_DIR/lang_field_grid_logs
+#   LOG_DIR=...             # stdout logs, default: RESULT_DIR/lang_field_grid_logs
 #
 ##################################################
 
@@ -68,15 +68,15 @@ for D in "${REQUIRED_DIMS[@]}"; do
     fi
 done
 if [ "${#_missing[@]}" -gt 0 ]; then
-    echo "ERROR: нет папок автоэнкодера:"
+    echo "ERROR: autoencoder folders missing:"
     printf '  - %s\n' "${_missing[@]}"
     exit 1
 fi
 
 _ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
-# Запуск одной задачи: D, level, num_iters → 03_train_gaussian_lang_field.sh
-# loss_*.txt пишется в output_dir внутри train_language_field (см. LangSplatam)
+# Launch one job: D, level, num_iters → 03_train_gaussian_lang_field.sh
+# loss_*.txt is written to output_dir inside train_language_field (see LangSplatam)
 _run_one() {
     local D=$1
     local L=$2
@@ -163,8 +163,8 @@ _run_one 64 m "$NUM_ITERS_LARGE" || _failed=1
 
 echo ""
 if [ "$_failed" -eq 0 ]; then
-    echo "[$(_ts)] Готово. Loss-файлы: \${RESULT_DIR}/lang_field_*/loss_*.txt ; stdout: $LOG_DIR"
+    echo "[$(_ts)] Done. Loss files: \${RESULT_DIR}/lang_field_*/loss_*.txt ; stdout: $LOG_DIR"
 else
-    echo "[$(_ts)] Были ошибки — см. $LOG_DIR/stdout_*.log"
+    echo "[$(_ts)] Errors occurred — see $LOG_DIR/stdout_*.log"
     exit 1
 fi

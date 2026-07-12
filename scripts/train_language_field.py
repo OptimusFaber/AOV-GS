@@ -52,9 +52,9 @@ def main():
 
     features_dir = args.features_dir or args.features_dim3
     if features_dir is None:
-        raise ValueError("Укажите --features_dir")
+        raise ValueError("Specify --features_dir")
 
-    logger.info("Загружаем LangSplatam из: %s", args.checkpoint)
+    logger.info("Loading LangSplatam from: %s", args.checkpoint)
     model = LangSplatam(
         checkpoint_path=args.checkpoint,
         latent_dim=args.latent_dim,
@@ -66,7 +66,7 @@ def main():
     )
 
     logger.info(
-        "Обучение language field (mode=%s, level=%s, iters=%d)",
+        "Training language field (mode=%s, level=%s, iters=%d)",
         "legacy" if args.legacy else "LangSplatV2",
         args.level,
         args.num_iters,
@@ -86,7 +86,7 @@ def main():
         train_downscale=args.train_downscale,
     )
 
-    logger.info("Готово: %s", args.output_dir)
+    logger.info("Done: %s", args.output_dir)
 
 
 if __name__ == "__main__":

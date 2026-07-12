@@ -2,37 +2,37 @@
 ##################################################
 # Step 2: Train CLIP autoencoder (512 → N → 512)
 #
-# Читает CLIP-фичи из language_features/*_f.npy,
-# обучает автоэнкодер с заданным латентным размером,
-# сохраняет сжатые фичи в language_features_dimN/.
+# Reads CLIP features from language_features/*_f.npy,
+# trains an autoencoder with the given latent size,
+# saves compressed features to language_features_dimN/.
 #
-# Поддерживаемые значения LATENT_DIM: 3, 4, 8, 16, 32, 64
+# Supported LATENT_DIM values: 3, 4, 8, 16, 32, 64
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       RESULT_DIR [LATENT_DIM] [NUM_EPOCHS] [DEVICE] [HIDDEN_DIMS]
 #
-#   Аргументы (по порядку):
-#     1  RESULT_DIR   — папка с результатами SLAM (обязательный)
-#     2  LATENT_DIM   — выходная размерность AE: 3/4/8/16/32/64  (default: 64)
-#     3  NUM_EPOCHS   — число эпох обучения                       (default: 100)
+#   Arguments (in order):
+#     1  RESULT_DIR   — SLAM results directory (required)
+#     2  LATENT_DIM   — AE output dim: 3/4/8/16/32/64  (default: 64)
+#     3  NUM_EPOCHS   — number of training epochs                 (default: 100)
 #     4  DEVICE       — cuda:0 / cuda:1                           (default: cuda:0)
-#     5  HIDDEN_DIMS  — промежуточные слои через пробел в кавычках
-#                       если не задан — берётся дефолт для LATENT_DIM
-#                       пример: "256 64"  →  512 → 256 → 64 → LATENT_DIM
+#     5  HIDDEN_DIMS  — intermediate layers as space-separated quoted list
+#                       if unset — default for LATENT_DIM is used
+#                       example: "256 64"  →  512 → 256 → 64 → LATENT_DIM
 #
-# Примеры:
+# Examples:
 #   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64
 #
 #   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0
 #
-#   # Своя архитектура: 512 → 128 → 4
+#   # Custom architecture: 512 → 128 → 4
 #   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 4 100 cuda:0 "128"
 #
-#   # Своя архитектура: 512 → 256 → 32 → 4
+#   # Custom architecture: 512 → 256 → 32 → 4
 #   bash scripts/aov-gs/02_train_clip_autoencoder.sh \
 #       results/Replica/room0/ActiveOpenSem/run_0 4 200 cuda:1 "256 32"
 ##################################################
@@ -43,19 +43,19 @@ RESULT_DIR=${1:?"Usage: $0 RESULT_DIR [LATENT_DIM] [NUM_EPOCHS] [DEVICE] [HIDDEN
 LATENT_DIM=${2:-64}
 NUM_EPOCHS=${3:-100}
 DEVICE=${4:-cuda:0}
-HIDDEN_DIMS=${5:-""}   # опционально: промежуточные слои через пробел
+HIDDEN_DIMS=${5:-""}   # optional: intermediate layers space-separated
 
 PROJ_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_DIR"
 
-# Имя сцены берём из пути (для папки ckpt/)
+# Scene name is taken from the path (for ckpt/ folder)
 SCENE=$(basename "$(dirname "$(dirname "$RESULT_DIR")")")
 
-# ── Размеры слоёв ──────────────────────────────────────────────────────────
-# Если HIDDEN_DIMS задан — используем его, иначе дефолт по LATENT_DIM
+# ── Layer sizes ────────────────────────────────────────────────────────────
+# If HIDDEN_DIMS is set — use it, else default by LATENT_DIM
 if [ -n "$HIDDEN_DIMS" ]; then
     ENCODER_DIMS="${HIDDEN_DIMS} ${LATENT_DIM}"
-    # decoder — обратный порядок hidden + 512
+    # decoder — reverse hidden order + 512
     DECODER_DIMS="$(echo "$HIDDEN_DIMS" | awk '{for(i=NF;i>0;i--) printf $i" "} END{print "512"}')"
 else
     case "$LATENT_DIM" in
@@ -66,16 +66,16 @@ else
         32) ENCODER_DIMS="256 128 32";   DECODER_DIMS="128 256 512" ;;
         64) ENCODER_DIMS="256 128 64";   DECODER_DIMS="128 256 512" ;;
         *)
-            echo "ERROR: LATENT_DIM='${LATENT_DIM}' без HIDDEN_DIMS не поддерживается."
-            echo "       Укажите HIDDEN_DIMS или используйте LATENT_DIM из: 3, 4, 8, 16, 32, 64"
+            echo "ERROR: LATENT_DIM='${LATENT_DIM}' without HIDDEN_DIMS is not supported."
+            echo "       Set HIDDEN_DIMS or use LATENT_DIM from: 3, 4, 8, 16, 32, 64"
             exit 1
             ;;
     esac
 fi
 
 if [ ! -d "${RESULT_DIR}/language_features" ]; then
-    echo "ERROR: language_features не найдены в ${RESULT_DIR}"
-    echo "       Сначала выполните 01_slam_exploration.sh"
+    echo "ERROR: language_features not found in ${RESULT_DIR}"
+    echo "       Run 01_slam_exploration.sh first"
     exit 1
 fi
 
@@ -100,6 +100,6 @@ python scripts/train_language_autoencoder.py \
     --device       "$DEVICE"
 
 echo ""
-echo "=== Autoencoder (512→${LATENT_DIM}) обучен ==="
-echo "    Сжатые фичи: ${RESULT_DIR}/language_features_dim${LATENT_DIM}/"
-echo "    Чекпойнт AE: ckpt/${SCENE}/${LATENT_DIM}/best_ckpt.pth"
+echo "=== Autoencoder (512→${LATENT_DIM}) trained ==="
+echo "    Compressed features: ${RESULT_DIR}/language_features_dim${LATENT_DIM}/"
+echo "    AE checkpoint: ckpt/${SCENE}/${LATENT_DIM}/best_ckpt.pth"

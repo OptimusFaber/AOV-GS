@@ -6,14 +6,14 @@ EN: ``traj.txt`` stores absolute RDF camera-to-world poses in the same world fra
 training ``data/Replica/<scene>/traj.txt``.  To recover the Habitat/RUB pose, simply negate
 columns 1 and 2 (Y and Z axes) of the stored matrix.
 
-RU: Рендер одного кадра Habitat по строке из ``traj.txt``. Позы в RDF; для Habitat инвертируются
-оси Y и Z.  Оба файла ``*_raw`` и ``*_dataset`` — один и тот же кадр: ``HabitatSim.simulate`` уже
-нормализует строки (``pinhole_vertical_flip`` в ``habitat.py``), как при генерации ``frame*.jpg``.
+Render one Habitat frame from a ``traj.txt`` row. Poses are RDF; for Habitat, Y and Z axes
+are inverted. Both ``*_raw`` and ``*_dataset`` are the same frame: ``HabitatSim.simulate`` already
+normalizes rows (``pinhole_vertical_flip`` in ``habitat.py``), as when generating ``frame*.jpg``.
 
 EN: Both outputs are identical upright RGB matching ``generate_Replica_NVS_data`` / training JPGs
 (simulator applies ``pinhole_vertical_flip`` from ``habitat.py``).
 
-Example / Пример::
+Example::
 
   cd New-Proj
   python scripts/render_traj_pose_habitat.py \\
@@ -22,8 +22,8 @@ Example / Пример::
     --pose_idx 0 \\
     --out results/debug_habitat_pose.png
 
-Note / Замечание: индекс строки ``traj.txt`` не всегда совпадает с ``frameXXXXXX.jpg``, если при
-генерации часть кадров пропускалась (too close).
+Note: the ``traj.txt`` row index does not always match ``frameXXXXXX.jpg`` if some frames
+were skipped during generation (too close).
 """
 
 from __future__ import annotations

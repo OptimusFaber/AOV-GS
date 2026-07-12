@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Рендер RGB вида сцены с каждой позы из keyframe_poses.json (w2c как в SplaTAM).
+Render RGB scene views from each pose in keyframe_poses.json (w2c as in SplaTAM).
 
-Использует только checkpoint гауссиан (params.npz); языковое поле не нужно.
+Uses only the Gaussian checkpoint (params.npz); language field not required.
 
-Важно: ``keyframe_poses.json`` и ``params.npz`` должны быть из одного и того же
-запуска (один ``result_dir``). Иначе камера окажется «вне сцены» — чёрный/пустой
-кадр, хотя геометрия в npz корректна.
+Important: ``keyframe_poses.json`` and ``params.npz`` must come from the same
+run (one ``result_dir``). Otherwise the camera will be “outside the scene” — black/empty
+frame, even though the geometry in the npz is correct.
 
 Example
 -------
@@ -15,7 +15,7 @@ python scripts/render_keyframe_poses.py \\
   --poses      results/keyframe_poses.json \\
   --out_dir    results/keyframe_rgb_renders
 
-Проверка без рендера (рекомендуется при странных кадрах)::
+Check without rendering (recommended when frames look wrong)::
 
   python scripts/render_keyframe_poses.py --checkpoint ... --poses ... \\
     --out_dir /tmp/x --check_only
@@ -64,12 +64,12 @@ def check_poses_vs_gaussians(
     margin_m: float = 0.5,
 ) -> None:
     """
-    Сравнивает центры камер из JSON с облаком means3D из checkpoint.
-    Печатает статистику; при сильном расхождении подсказывает смешанный run.
+    Compares camera centers from JSON to the means3D cloud from the checkpoint.
+    Prints stats; on large mismatch suggests a mixed run.
     """
     raw = dict(np.load(checkpoint_path, allow_pickle=True))
     if "means3D" not in raw:
-        print("check: в npz нет means3D — пропуск.")
+        print("check: no means3D in npz — skip.")
         return
     means = np.asarray(raw["means3D"], dtype=np.float64).reshape(-1, 3)
     lo = np.percentile(means, 1.0, axis=0)
@@ -81,7 +81,7 @@ def check_poses_vs_gaussians(
         poses_raw = json.load(f)
     fids, cam_centers = _camera_centers_from_poses_json(poses_raw, max_frames)
     if len(cam_centers) == 0:
-        print("check: нет поз в JSON.")
+        print("check: no poses in JSON.")
         return
 
     dists = np.linalg.norm(cam_centers - center_cloud.reshape(1, 3), axis=1)
@@ -94,18 +94,18 @@ def check_poses_vs_gaussians(
         f"||hi-lo||≈{extent:.3f} m"
     )
     print(
-        f"check: камер в JSON: {len(fids)}, расстояние до центра облака: "
+        f"check: cameras in JSON: {len(fids)}, distance to cloud center: "
         f"min={dists.min():.3f} m, median={np.median(dists):.3f} m, max={dists.max():.3f} m"
     )
     print(
-        f"check: внутри расширенного AABB (±{margin_m} m): "
+        f"check: inside expanded AABB (±{margin_m} m): "
         f"{len(fids) - n_out}/{len(fids)}"
     )
     if n_out > len(fids) // 2 or np.median(dists) > 0.5 * max(extent, 1.0):
         print(
-            "check: WARNING — большинство камер далеко от облака гауссиан. "
-            "Часто это разные runs: возьмите keyframe_poses.json и params.npz "
-            "из одной папки results/ одного эксперимента."
+            "check: WARNING — most cameras are far from the Gaussian cloud. "
+            "Often these are different runs: take keyframe_poses.json and params.npz "
+            "from the same results/ folder of one experiment."
         )
 
 
@@ -125,9 +125,9 @@ def render_rgb(model: LangSplatam, w2c: torch.Tensor, H: int, W: int) -> np.ndar
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="RGB render each keyframe w2c from JSON.")
-    p.add_argument("--checkpoint", required=True, help="params*.npz от SplaTAM")
+    p.add_argument("--checkpoint", required=True, help="params*.npz from SplaTAM")
     p.add_argument("--poses", required=True, help="keyframe_poses.json")
-    p.add_argument("--out_dir", required=True, help="Куда сохранить PNG + manifest")
+    p.add_argument("--out_dir", required=True, help="Where to save PNG + manifest")
     p.add_argument(
         "--device",
         default="cuda:0",
@@ -137,18 +137,18 @@ def parse_args() -> argparse.Namespace:
         "--latent_dim",
         type=int,
         default=3,
-        help="Только для конструктора LangSplatam; RGB не использует lang_feats.",
+        help="Only for the LangSplatam constructor; RGB does not use lang_feats.",
     )
-    p.add_argument("--max_frames", type=int, default=0, help="0 = все keyframes")
+    p.add_argument("--max_frames", type=int, default=0, help="0 = all keyframes")
     p.add_argument(
         "--check_only",
         action="store_true",
-        help="Только проверка согласованности поз с means3D (без рендера).",
+        help="Only check pose consistency with means3D (no render).",
     )
     p.add_argument(
         "--no_precheck",
         action="store_true",
-        help="Не выполнять быструю проверку AABB перед рендером.",
+        help="Skip the quick AABB check before rendering.",
     )
     return p.parse_args()
 

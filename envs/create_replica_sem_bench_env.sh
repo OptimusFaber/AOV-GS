@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Create a conda environment for replica_sem_benchmark (SAM1 + CLIP + HF SAM2/SAM3).
 #
-# RU: ставит PyTorch (CUDA или CPU), затем transformers>=4.56 и зависимости из
-#     requirements_replica_sem_bench.txt (open_clip, segment_anything из git, …).
+# Installs PyTorch (CUDA or CPU), then transformers>=4.56 and deps from
+#     requirements_replica_sem_bench.txt (open_clip, segment_anything from git, …).
 #
 # EN: installs PyTorch first, then pip packages for eval_clip_sam_systematic.py.
 #

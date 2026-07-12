@@ -1,9 +1,9 @@
 """
-Гибридная тактика исследования: геометрия (непокрытые пиксели) + семантика SAM+CLIP.
+Hybrid exploration tactic: geometry (uncovered pixels) + SAM+CLIP semantics.
 
-В отличие от ActiveSGM (OneFormer + энтропия logits), здесь семантический сигнал —
-насколько эмбеддинги масок кандидатного вида отличаются от уже собранных keyframe
-эмбеддингов в ``language_features/``. Чем больше отличие, тем выше приоритет.
+Unlike ActiveSGM (OneFormer + logits entropy), the semantic signal here is
+how much candidate-view mask embeddings differ from already collected keyframe
+embeddings in ``language_features/``. Larger difference → higher priority.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def load_keyframe_mask_embeddings(
     lang_feat_dir: Union[str, Path],
     frame_id: int,
 ) -> np.ndarray:
-    """Загрузить L2-нормированные CLIP-эмбеддинги масок keyframe (N, D)."""
+    """Load L2-normalized CLIP keyframe mask embeddings (N, D)."""
     f_path = Path(lang_feat_dir) / f"{frame_id:06d}_f.npy"
     if not f_path.exists():
         return np.zeros((0, 512), dtype=np.float32)
@@ -66,10 +66,10 @@ def mask_embedding_coverage(
     reference_feats: np.ndarray,
 ) -> float:
     """
-    Насколько рендер покрывает эталонные CLIP-эмбеддинги масок keyframe.
+    How well the render covers reference CLIP keyframe mask embeddings.
 
-    Для каждой reference-маски: max_k cos(ref_k, rendered). Итог — mean.
-    Значение в [0, 1]; выше — лучше семантическое совпадение.
+    For each reference mask: max_k cos(ref_k, rendered). Result — mean.
+    Value in [0, 1]; higher — better semantic match.
     """
     if reference_feats.shape[0] == 0:
         return 0.0
@@ -88,10 +88,10 @@ def mask_embedding_novelty(
     aggregation: str = "mean",
 ) -> float:
     """
-    Новизна кандидата относительно банка масок.
+    Candidate novelty relative to the mask bank.
 
-    Для каждой маски кандидата: dissim = 1 - max_k cos(e_cand, e_bank).
-    Итог: mean или max по маскам кандидата.
+    For each candidate mask: dissim = 1 - max_k cos(e_cand, e_bank).
+    Result: mean or max over candidate masks.
     """
     if candidate_feats.shape[0] == 0:
         return 0.0
@@ -108,7 +108,7 @@ def mask_embedding_novelty(
 
 
 class KeyframeMaskEmbeddingBank:
-    """Банк SAM+CLIP эмбеддингов масок с диска (language_features/)."""
+    """Bank of SAM+CLIP mask embeddings from disk (language_features/)."""
 
     def __init__(self, lang_feat_dir: Union[str, Path]) -> None:
         self.lang_feat_dir = Path(lang_feat_dir)
@@ -125,7 +125,7 @@ class KeyframeMaskEmbeddingBank:
         encoder: Optional["PlanningSAMCLIPEncoder"] = None,
         encode_if_missing: bool = False,
     ) -> int:
-        """Догрузить keyframe-эмбеддинги с диска или из RGB keyframe (fallback)."""
+        """Load more keyframe embeddings from disk or from RGB keyframe (fallback)."""
         kf_by_id = {int(kf["id"]): kf for kf in (keyframe_list or [])}
         new_blocks: List[np.ndarray] = []
         if self._bank is not None and self._bank.shape[0] > 0:
@@ -168,7 +168,7 @@ def _embed_masks_standalone(
     clip_batch_size: int,
     bbox_pad_px: int,
 ) -> np.ndarray:
-    """Локальная обёртка вокруг логики SAMCLIPExtractor._embed_masks."""
+    """Local wrapper around SAMCLIPExtractor._embed_masks logic."""
     from src.semantic.sam_clip_extractor import (
         _resize_to_fit_and_letterbox_replicate,
         _tight_crop_with_padding,
@@ -229,9 +229,9 @@ def corrclip_kwargs_from_config(sam_cfg) -> dict:
 
 class PlanningSAMCLIPEncoder:
     """
-    Синхронный SAM+CLIP для оценки кандидатных видов в планировщике.
+    Synchronous SAM+CLIP for scoring candidate views in the planner.
 
-    Модели грузятся лениво; лимиты масок ниже, чем у фонового SAMCLIPExtractor.
+    Models load lazily; mask limits are lower than the background SAMCLIPExtractor.
     """
 
     def __init__(
@@ -383,7 +383,7 @@ class PlanningSAMCLIPEncoder:
 
     @torch.no_grad()
     def encode_rgb(self, image_rgb: np.ndarray) -> np.ndarray:
-        """RGB uint8 (H,W,3) → (N, 512) float32 L2-нормированные эмбеддинги масок."""
+        """RGB uint8 (H,W,3) → (N, 512) float32 L2-normalized mask embeddings."""
         from src.semantic.sam_clip_extractor import (
             _habitat_rgb_for_sam,
             _sam_masks_to_habitat,
@@ -450,9 +450,9 @@ class PlanningSAMCLIPEncoder:
 
 class HybridSemanticExplorationScorer:
     """
-    Скорер семантической новизны для этапа исследования (stage 0).
+    Semantic novelty scorer for the exploration stage (stage 0).
 
-    Использует банк keyframe-эмбеддингов с диска и SAM+CLIP на симулированном RGB.
+    Uses the on-disk keyframe embedding bank and SAM+CLIP on simulated RGB.
     """
 
     def __init__(
@@ -523,8 +523,8 @@ class HybridSemanticExplorationScorer:
         rendered_rgb: np.ndarray,
     ) -> tuple[float, bool, float]:
         """
-        SAM+CLIP coverage: насколько рендер на позе keyframe покрывает его
-        сохранённые mask-эмбеддинги (language_features/{id}_f.npy).
+        SAM+CLIP coverage: how well the render at the keyframe pose covers its
+        saved mask embeddings (language_features/{id}_f.npy).
 
         Returns (coverage, ran_sam, sam_sec).
         """
@@ -543,7 +543,7 @@ class HybridSemanticExplorationScorer:
         keyframe_ids: List[int],
         keyframe_list: Optional[List[dict]] = None,
     ) -> torch.Tensor:
-        """Вернуть тензор новизны [N] для softmax-взвешивания."""
+        """Return novelty tensor [N] for softmax weighting."""
         t_bank = time.perf_counter()
         bank_masks = self.refresh_bank(keyframe_ids, keyframe_list)
         bank_sec = time.perf_counter() - t_bank
@@ -591,7 +591,7 @@ class HybridSemanticExplorationScorer:
         keyframe_ids: List[int],
         keyframe_list: Optional[List[dict]] = None,
     ) -> torch.Tensor:
-        """Обновить stats после того, как novelty для top-K уже посчитаны снаружи."""
+        """Update stats after novelty for top-K has already been computed externally."""
         t_bank = time.perf_counter()
         bank_masks = self.refresh_bank(keyframe_ids, keyframe_list)
         bank_sec = time.perf_counter() - t_bank

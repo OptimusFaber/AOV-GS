@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Разовая правка уже сохранённых кадров (legacy): вертикальный flip.
+One-shot fix for already saved frames (legacy): vertical flip.
 
-Для новых прогонов используйте ``pinhole_vertical_flip`` в ``configs/Replica/.../habitat.py`` и
-``HabitatSim.simulate`` — повторный flip здесь перевернёт кадры обратно.
+For new runs use ``pinhole_vertical_flip`` in ``configs/Replica/.../habitat.py`` and
+``HabitatSim.simulate`` — flipping again here would invert frames back.
 
-Обрабатывает в каталоге ``results_habitat`` (или аналоге):
+Processes under ``results_habitat`` (or similar):
   - ``frame*.jpg``
   - ``depth*.png`` (uint16)
   - ``semantic/semantic_map_*.npy``
 
-Запуск из New-Proj::
+Run from New-Proj::
 
     python scripts/fix_replica_habitat_vertical_flip.py \\
         --dir data/replica_sim_nvs/office0/results_habitat
 
-    # или бенч:
+    # or benchmark layout:
     python scripts/fix_replica_habitat_vertical_flip.py \\
         --dir replica_sem_benchmark --benchmark_layout
 
-Повторный запуск снова перевернёт кадры — не запускайте дважды на тех же файлах.
+Running again will flip frames once more — do not run twice on the same files.
 """
 
 from __future__ import annotations
@@ -52,17 +52,17 @@ def main() -> None:
         "--dir",
         type=Path,
         required=True,
-        help="Каталог: results_habitat или replica_sem_benchmark при --benchmark_layout",
+        help="Directory: results_habitat or replica_sem_benchmark with --benchmark_layout",
     )
     p.add_argument(
         "--benchmark_layout",
         action="store_true",
-        help="Ожидать подпапки images/*.jpg и semantic/*.npy рядом с manifest",
+        help="Expect images/*.jpg and semantic/*.npy next to the manifest",
     )
     args = p.parse_args()
     root = args.dir.resolve()
     if not root.is_dir():
-        print(f"Нет каталога: {root}", file=sys.stderr)
+        print(f"No such directory: {root}", file=sys.stderr)
         sys.exit(1)
 
     n_img = n_dep = n_sem = 0

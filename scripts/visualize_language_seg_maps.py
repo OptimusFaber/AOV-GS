@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visualize SAM+CLIP segmentation maps saved during ActiveSGM training (same as LangSplat ``*_s.npy``).
+Visualize SAM+CLIP segmentation maps saved during AOV-GS / open-vocabulary SLAM (same as LangSplat ``*_s.npy``).
 
 Training writes, per keyframe ``frame_id``::
 

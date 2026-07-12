@@ -1,27 +1,27 @@
 """
-Оценка качества языкового автоэнкодера через метрики семантической сегментации.
+Evaluate language autoencoder quality via semantic segmentation metrics.
 
-Что мерится
+What is measured
 -----------
-1. **Reconstruction cosine** — среднее cos(original_512, decode(encode(original_512)))
-   по всем маскам всех кадров. Показывает, насколько AE сохраняет информацию.
+1. **Reconstruction cosine** — mean cos(original_512, decode(encode(original_512)))
+   over all masks of all frames. Shows how well the AE preserves information.
 
-1b. **Сравнение с оригиналом 512** (те же маски):
-   - **MSE / RMSE** по разности векторов (после L2-нормы, как в рантайме);
-   - **mean L2** — средняя евклидова ошибка ||orig − dec||₂;
-   - **MAE** по координатам; **median / p5 / p95 cosine**.
+1b. **Comparison to original 512** (same masks):
+   - **MSE / RMSE** on vector differences (after L2-norm, as at runtime);
+   - **mean L2** — mean Euclidean error ||orig − dec||₂;
+   - **MAE** over coordinates; **median / p5 / p95 cosine**.
 
-2. **Retrieval mAP** (mean Average Precision) — для каждого текстового запроса:
-   - rank масок по cosine с original_512  → "ground-truth" релевантность
-   - rank масок по cosine с decoded_512   → предсказанная релевантность
-   - AP@top_k сравниваем, мерим как хорошо AE сохраняет порядок.
+2. **Retrieval mAP** (mean Average Precision) — for each text query:
+   - rank masks by cosine to original_512  → "ground-truth" relevance
+   - rank masks by cosine to decoded_512   → predicted relevance
+   - compare AP@top_k to measure how well the AE preserves ranking.
 
-3. **Rank correlation** (Spearman ρ) — по всем маскам и всем запросам:
-   ранг по original vs ранг по decoded. Показывает сохранение семантического порядка.
+3. **Rank correlation** (Spearman ρ) — over all masks and all queries:
+   rank by original vs rank by decoded. Shows preservation of semantic order.
 
-4. **Pixel segmentation IoU** — для каждого кадра, для каждого запроса:
-   - строим бинарную маску: топ-T% пикселей по cos с original → GT mask
-   - строим бинарную маску: топ-T% пикселей по cos с decoded → pred mask
+4. **Pixel segmentation IoU** — for each frame, for each query:
+   - build binary mask: top-T% pixels by cos to original → GT mask
+   - build binary mask: top-T% pixels by cos to decoded → pred mask
    - IoU(pred, GT)
 
 Usage
@@ -29,7 +29,7 @@ Usage
 python scripts/eval_language_autoencoder.py \\
     --features_orig  results/language_features \\
     --ae_ckpt        ckpt/room0/best_ckpt.pth \\
-    # опционально для IoU: --features_enc results/language_features_dim64 \\
+    # optional for IoU: --features_enc results/language_features_dim64 \\
 
 python scripts/eval_language_autoencoder.py \\
     --features_orig  results/language_features \\
@@ -134,15 +134,15 @@ def eval_ae(args: argparse.Namespace) -> None:
     if len(frame_ids) == 0:
         print(
             f"\n[error] No *_f.npy files under:\n  {orig_dir}\n\n"
-            "  Ожидаются **исходные 512-d CLIP-эмбеддинги масок** в формате LangSplat:\n"
-            "    {frame_id:06d}_f.npy  и  {frame_id:06d}_s.npy\n"
-            "  Их пишет **SAMCLIPExtractor** во время ActiveSGM, если в конфиге включено\n"
-            "  сохранение языковых фич (напр. slam.save_clip_features / open-vocab секция).\n"
-            "  `train_language_autoencoder.py` **читает** эту папку и создаёт language_features_dim*/\n"
-            "  — но **не генерирует** сырые *_f.npy сам.\n\n"
-            "  Что сделать:\n"
-            "  • Прогнать сбор фич для сцены (как у вас при обучении AE), либо\n"
-            "  • Указать --features_orig на каталог, где уже лежат *_f.npy (другой диск/резервная копия).\n",
+            "  Expected: **raw 512-d CLIP mask embeddings** in LangSplat format:\n"
+            "    {frame_id:06d}_f.npy  and  {frame_id:06d}_s.npy\n"
+            "  Written by **SAMCLIPExtractor** during AOV-GS / ActiveOpenSem if the config enables\n"
+            "  language feature saving (e.g. slam.save_clip_features / open-vocab section).\n"
+            "  `train_language_autoencoder.py` **reads** this folder and creates language_features_dim*/\n"
+            "  — but does **not** generate raw *_f.npy itself.\n\n"
+            "  What to do:\n"
+            "  • Run feature extraction for the scene (as when training the AE), or\n"
+            "  • Point --features_orig at a directory that already has *_f.npy (other disk/backup).\n",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -328,7 +328,7 @@ def eval_ae(args: argparse.Namespace) -> None:
 
     print("\nHow to read:")
     print("  cos  ≈ 1.0 → AE reconstructs CLIP vectors nearly perfectly.")
-    print("  MSE/RMSE/MAE → ошибка в пространстве R^512 (векторы L2-нормированы).")
+    print("  MSE/RMSE/MAE → error in R^512 space (vectors are L2-normalized).")
     print("  ρ   ≈ 1.0 → AE preserves ranking of objects by query similarity.")
     print("  IoU ≈ 1.0 → 'which pixels are most relevant' is the same before/after AE.")
     print("  If IoU is low but cos is high → ranking is broken (scale / direction issue).")
@@ -366,18 +366,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--features_orig", required=True,
                    help="language_features/ (original 512d)")
     p.add_argument("--features_enc",  default=None,
-                   help="language_features_dimD/ для IoU (опционально)")
+                   help="language_features_dimD/ for IoU (optional)")
     p.add_argument("--ae_ckpt",       required=True,
-                   help="best_ckpt.pth от train_language_autoencoder")
+                   help="best_ckpt.pth from train_language_autoencoder")
     p.add_argument("--queries", nargs="+",
                    default=["a sofa", "a table", "a plant", "the floor", "a chair"],
-                   help="Текстовые запросы для оценки")
+                   help="Text queries for evaluation")
     p.add_argument("--feature_level", type=int, default=1,
-                   help="Уровень SAM (0=default,1=s,2=m,3=l)")
+                   help="SAM level (0=default,1=s,2=m,3=l)")
     p.add_argument("--top_pct",       type=float, default=10.0,
-                   help="Top-%%  пикселей для IoU-порога (default 10%%)")
+                   help="Top-%%  pixels for IoU threshold (default 10%%)")
     p.add_argument("--encoder_dims",  nargs="+", type=int, default=None,
-                   help="Должно совпадать с train_language_autoencoder (дефолт: из Autoencoder)")
+                   help="Must match train_language_autoencoder (default: from Autoencoder)")
     p.add_argument("--decoder_dims",  nargs="+", type=int, default=None)
     p.add_argument("--clip_model",       default="ViT-B-16")
     p.add_argument("--clip_pretrained",  default="laion2b_s34b_b88k")
@@ -387,7 +387,7 @@ def parse_args() -> argparse.Namespace:
         help="Torch device for AE evaluation (default cuda:0).",
     )
     p.add_argument("--out_metrics", default=None,
-                   help="Сохранить числовые метрики в текстовый файл (key value)")
+                   help="Save numeric metrics to a text file (key value)")
     return p.parse_args()
 
 

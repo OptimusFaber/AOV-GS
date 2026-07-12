@@ -3,10 +3,10 @@
 ### Interactive CLIP navigation validator
 ###
 ### Loads keyframe images + camera poses from a
-### completed ActiveSGM run and lets you type text
+### completed AOV-GS (or ActiveSGM baseline) run and lets you type text
 ### queries to visualise where the robot would go.
 ###
-### Запуск из корня репозитория ActiveSGM.
+### Run from the AOV-GS repository root.
 ###
 ### Usage:
 ###   bash scripts/evaluation/validate_clip_nav.sh [SCENE] [EXP] [RUN] [DEVICE]
@@ -14,7 +14,7 @@
 ### Examples:
 ###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem 0 cuda:0
 ###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem bench_clip cuda:0
-###   # Без GUI (сервер/headless):
+###   # Without GUI (server/headless):
 ###   bash scripts/evaluation/validate_clip_nav.sh office0 ActiveOpenSem 0 cuda:0 --headless
 ##################################################
 

@@ -1,11 +1,11 @@
 """
-ActiveOpenSemHybrid — SplaTAM + гибридный планировщик на stage 0.
+ActiveOpenSemHybrid — SplaTAM + hybrid planner on stage 0.
 
 Stage 0: geometry IG × distance × SAM+CLIP embedding novelty
-         (идём туда, где эмбеддинги масок отличаются от уже собранных keyframes).
-Stage 1: чистая геометрия (как active_gs).
+         (go where mask embeddings differ from already collected keyframes).
+Stage 1: pure geometry (same as active_gs).
 
-Запуск:
+Run:
 
     python src/main/activesgm.py configs/Replica/office0/ActiveOpenSemHybrid.py
 """
@@ -18,7 +18,7 @@ with read_base():
     from .ActiveOpenSem import *
 
 
-# Отдельная папка результатов (не ActiveOpenSem).
+# Separate results folder (not ActiveOpenSem).
 dirs["result_dir"] = os.path.join(
     "results",
     general["dataset"],

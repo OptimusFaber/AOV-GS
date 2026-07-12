@@ -1,9 +1,9 @@
 """
-ActiveOpenSemGeom — SplaTAM + active_gs (только геометрия, без семантики в planning).
+ActiveOpenSemGeom — SplaTAM + active_gs (geometry only, no semantics in planning).
 
-Результаты: results/Replica/office0/ActiveGeom/run_N/
+Results: results/Replica/office0/ActiveGeom/run_N/
 
-Запуск:
+Run:
 
     python src/main/activesgm.py configs/Replica/office0/ActiveOpenSemGeom.py
 """

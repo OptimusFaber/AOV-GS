@@ -38,6 +38,33 @@ def _camera_forward_xy(c2w: np.ndarray) -> np.ndarray:
     return xy / n
 
 
+def save_exploration_path_poses_json(
+    poses_c2w: Sequence[np.ndarray],
+    save_dir: Union[str, Path],
+    *,
+    scene_name: str = "",
+    run_tag: str = "",
+) -> Path:
+    """Write ``exploration_path_poses.json`` only (cheap checkpoint for long runs)."""
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    poses_list = [np.asarray(p, dtype=np.float64).tolist() for p in poses_c2w]
+    json_path = save_dir / "exploration_path_poses.json"
+    tmp_path = save_dir / "exploration_path_poses.json.tmp"
+    payload = {
+        "coord_system": "habitat_RUB",
+        "scene": scene_name,
+        "run_tag": run_tag,
+        "num_poses": len(poses_list),
+        "poses_c2w": poses_list,
+    }
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    tmp_path.replace(json_path)
+    return json_path
+
+
 def save_exploration_path_topdown(
     poses_c2w: Sequence[np.ndarray],
     save_dir: Union[str, Path],
@@ -63,20 +90,12 @@ def save_exploration_path_topdown(
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    poses_list = [np.asarray(p, dtype=np.float64).tolist() for p in poses_c2w]
-    json_path = save_dir / "exploration_path_poses.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "coord_system": "habitat_RUB",
-                "scene": scene_name,
-                "run_tag": run_tag,
-                "num_poses": len(poses_list),
-                "poses_c2w": poses_list,
-            },
-            f,
-            indent=2,
-        )
+    save_exploration_path_poses_json(
+        poses_c2w,
+        save_dir,
+        scene_name=scene_name,
+        run_tag=run_tag,
+    )
 
     png_path = save_dir / "exploration_path_topdown.png"
     if len(poses_c2w) == 0:

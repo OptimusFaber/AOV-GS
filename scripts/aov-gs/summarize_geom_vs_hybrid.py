@@ -146,11 +146,11 @@ def main() -> None:
 
     lines: list[str] = []
     lines.append("=" * 90)
-    lines.append("Replica: ActiveGeom vs ActiveOpenSem — сводка метрик")
+    lines.append("Replica: ActiveGeom vs ActiveOpenSem — metrics summary")
     lines.append("=" * 90)
     lines.append("")
-    lines.append("Модели:")
-    lines.append("  • ActiveGeom           — геометрический active planner (active_gs)")
+    lines.append("Models:")
+    lines.append("  • ActiveGeom           — geometry-only active planner (active_gs)")
     lines.append("  • ActiveOpenSem                — SAM+CLIP semantic exploration + hybrid v3 planner")
     lines.append("")
     lines.append("NVS: splatam/eval_final | Exploration: eval_exploration_stage_0/1")
@@ -200,9 +200,9 @@ def main() -> None:
         f"{mean(r[2]['render']['l1(cm)'] for r in rows):>6.2f} |"
     )
     lines.append("")
-    lines.append("Depth в см. Win = majority по PSNR, SSIM, LPIPS↓, Depth↓.")
+    lines.append("Depth in cm. Win = majority over PSNR, SSIM, LPIPS↓, Depth↓.")
     lines.append("")
-    lines.append("--- Победы по отдельным метрикам (8 сцен) ---")
+    lines.append("--- Wins by individual metrics (8 scenes) ---")
     for label, key, higher in [
         ("PSNR final", "psnr", True),
         ("SSIM final", "ssim", True),
@@ -222,7 +222,7 @@ def main() -> None:
         lines.append(f"  {label:<16} Hybrid {hw}/8 | Geom {gw}/8")
     lines.append(f"  {'Majority vote':<16} Hybrid {hybrid_scene_wins}/8 | Geom {geom_scene_wins}/8 | tie {tie_scene_wins}/8")
     lines.append("")
-    lines.append("--- Средние Δ (Hybrid − Geom) ---")
+    lines.append("--- Mean Δ (Hybrid − Geom) ---")
     lines.append(f"  ΔPSNR final:  {mean(h['render']['psnr'] - g['render']['psnr'] for _, g, h in rows):+.2f} dB")
     lines.append(f"  ΔSSIM final:  {mean(h['render']['ssim'] - g['render']['ssim'] for _, g, h in rows):+.4f}")
     lines.append(f"  ΔLPIPS final: {mean(h['render']['lpips'] - g['render']['lpips'] for _, g, h in rows):+.4f}")
@@ -230,7 +230,7 @@ def main() -> None:
     lines.append(f"  ΔPSNR stage0: {mean(h['s0']['psnr'] - g['s0']['psnr'] for _, g, h in rows):+.2f} dB")
     lines.append(f"  ΔPSNR stage1: {mean(h['s1']['psnr'] - g['s1']['psnr'] for _, g, h in rows):+.2f} dB")
     lines.append("")
-    lines.append("--- Семантика (office0, lang_field_traj_eval) ---")
+    lines.append("--- Semantics (office0, lang_field_traj_eval) ---")
     g0, h0 = rows[0][1], rows[0][2]
     lines.append(
         f"  Lang-field mIoU: Geom {g0['miou_lang']:.1f}% → Hybrid {h0['miou_lang']:.1f}% "
@@ -242,14 +242,14 @@ def main() -> None:
     lines.append(
         f"  mIoU_p (curr):   Geom {g0['sem'].get('miou_p_curr', 0):.2f}% | Hybrid {h0['sem'].get('miou_p_curr', 0):.2f}%"
     )
-    lines.append("  Per-class: Hybrid 17/23 классов (office0/geom_vs_hybrid_miou_per_class.csv)")
+    lines.append("  Per-class: Hybrid 17/23 classes (office0/geom_vs_hybrid_miou_per_class.csv)")
     lines.append("")
-    lines.append("--- Выводы ---")
-    lines.append("  1. NVS в среднем лучше у Hybrid: +1.0 dB PSNR, −0.01 LPIPS, −0.17 cm depth.")
-    lines.append("  2. Hybrid сильнее на office2, office3, office4, room0, room1; Geom — office1, room2.")
-    lines.append("  3. На stage 0 Hybrid часто даёт более качественную карту (office0: +1.6 dB).")
-    lines.append("  4. Lang-field mIoU на office0: +7.1 pp; mIoU_p на RGB-рендере почти не меняется.")
-    lines.append("  5. Lang-field eval для office1–4, room0–2 ещё не выполнен.")
+    lines.append("--- Conclusions ---")
+    lines.append("  1. NVS is on average better for Hybrid: +1.0 dB PSNR, −0.01 LPIPS, −0.17 cm depth.")
+    lines.append("  2. Hybrid is stronger on office2, office3, office4, room0, room1; Geom — office1, room2.")
+    lines.append("  3. On stage 0 Hybrid often yields a higher-quality map (office0: +1.6 dB).")
+    lines.append("  4. Lang-field mIoU on office0: +7.1 pp; mIoU_p on RGB render barely changes.")
+    lines.append("  5. Lang-field eval for office1–4, room0–2 not yet run.")
     lines.append("=" * 90)
 
     OUT_TXT.write_text("\n".join(lines) + "\n")

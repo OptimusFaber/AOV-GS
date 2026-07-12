@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 ##################################################
-# Pipeline 2 — Gaussian Splatting с OneFormer
+# Pipeline 2 — Gaussian Splatting with OneFormer
 #
-# Конфиг: ActiveSem (semsplatam + OneFormer + семантический планировщик active_gsv2).
-# Нужны веса OneFormer / HuggingFace (см. configs/Replica/<scene>/ActiveSem.py).
-# Результат: семантическая карта; SAM+CLIP language_features здесь не пишутся.
+# Config: ActiveSem (semsplatam + OneFormer + semantic planner active_gsv2).
+# OneFormer / HuggingFace weights required (see configs/Replica/<scene>/ActiveSem.py).
+# Result: semantic map; SAM+CLIP language_features are not written here.
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/pipeline_gs_oneformer.sh [SCENE] [SEED] [ENABLE_VIS] [DEBUG]
 #
-# Пример:
+# Example:
 #   bash scripts/aov-gs/pipeline_gs_oneformer.sh office0 0 0 0
 ##################################################
 
@@ -26,8 +26,8 @@ EXP="ActiveSem"
 RESULT_DIR="${PROJ_DIR}/results/Replica/${SCENE}/${EXP}/run_0"
 
 if [ ! -f "${PROJ_DIR}/configs/Replica/${SCENE}/${EXP}.py" ]; then
-  echo "ERROR: нет конфига ${PROJ_DIR}/configs/Replica/${SCENE}/${EXP}.py"
-  echo "       Скопируйте/адаптируйте ActiveSem.py для этой сцены (см. другие office*/ActiveSem.py)."
+  echo "ERROR: missing config ${PROJ_DIR}/configs/Replica/${SCENE}/${EXP}.py"
+  echo "       Copy/adapt ActiveSem.py for this scene (see other office*/ActiveSem.py)."
   exit 1
 fi
 
@@ -42,5 +42,5 @@ bash "${SCRIPT_DIR}/01_slam_exploration.sh" "${SCENE}" "${EXP}" "${SEED}" "${ENA
 
 echo ""
 echo "=== Pipeline 2 finished ==="
-echo "    Gaussians: ${RESULT_DIR}/splatam/final/params0.npz (или params.npz)"
-echo "    Для open-vocab языкового поля используйте pipeline 3 или 4 (ActiveOpenSem)."
+echo "    Gaussians: ${RESULT_DIR}/splatam/final/params0.npz (or params.npz)"
+echo "    For open-vocab language field use pipeline 3 or 4 (ActiveOpenSem)."

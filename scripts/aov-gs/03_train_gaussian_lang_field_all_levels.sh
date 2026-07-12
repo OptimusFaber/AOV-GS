@@ -1,6 +1,6 @@
 #!/bin/bash
 ##################################################
-# LangSplatV2: последовательно s → m → l (или параллельно через batch-скрипт).
+# LangSplatV2: sequential s → m → l (or parallel via batch script).
 #
 #   bash scripts/aov-gs/03_train_gaussian_lang_field_all_levels.sh \
 #       RESULT_DIR [K] [NUM_ITERS] [DEVICE] [L] [TOPK] [RENDER_CHECKPOINT]
@@ -34,4 +34,4 @@ run_level s
 run_level m
 run_level l
 
-echo "=== Все три уровня завершены ==="
+echo "=== All three levels finished ==="

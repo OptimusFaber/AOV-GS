@@ -54,6 +54,12 @@ def lerp_quaternions(start_quat, end_quat, max_angle_deg):
 
     # Calculate the minimum steps required
     min_steps = int(np.ceil(total_angle_rad / max_angle_rad))
+    if min_steps <= 0:
+        q = np.asarray(start_quat, dtype=np.float64).copy()
+        qn = float(np.linalg.norm(q))
+        if np.isfinite(qn) and qn >= 1e-9:
+            q = q / qn
+        return np.array([q]), 0
 
     quaternions = []
     for i in range(min_steps + 1):

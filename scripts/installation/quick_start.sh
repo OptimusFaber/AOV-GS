@@ -18,7 +18,7 @@ Usage: bash scripts/installation/quick_start.sh [OPTIONS]
   Installs everything needed before running the SLAM / open-vocab pipeline.
 
   Disk space (rough estimate):
-    conda env (active-sgm)     ~12 GB
+    conda env (aov-gs)     ~12 GB
     Replica meshes (v1)        ~2 GB
     ReplicaSLAM + Habitat/NVS  ~5–15 GB (depends on scenes)
     SAM checkpoint             ~0.4 GB
@@ -34,7 +34,7 @@ Options:
   -h, --help         this message
 
 After completion:
-  conda activate active-sgm
+  conda activate aov-gs
   See scripts/aov-gs/README.md to run the pipeline.
 EOF
 }
@@ -76,8 +76,8 @@ echo "=== 2/5 conda environment ==="
 if [[ "$SKIP_ENV" -eq 1 ]]; then
   echo "[skip] --skip-env"
 else
-  if command -v conda >/dev/null 2>&1 && conda env list | grep -qE '(^| )active-sgm( |$)'; then
-    echo "[quick_start] conda env active-sgm already exists — skipping build_sem.sh"
+  if command -v conda >/dev/null 2>&1 && conda env list | grep -qE '(^| )(aov-gs|active-gs|active-sgm)( |$)'; then
+    echo "[quick_start] conda env aov-gs already exists — skipping build_sem.sh"
     echo "              Re-run build manually if needed: bash scripts/installation/conda_env/build_sem.sh"
   else
     bash scripts/installation/conda_env/build_sem.sh
@@ -85,7 +85,7 @@ else
 fi
 
 eval "$(conda shell.bash hook)"
-conda activate active-sgm
+conda activate aov-gs
 
 echo ""
 echo "=== 3/5 pip packages (open-vocab) ==="
@@ -115,6 +115,6 @@ fi
 echo ""
 echo "=============================================="
 echo "  Quick start finished."
-echo "  Next: conda activate active-sgm"
+echo "  Next: conda activate aov-gs"
 echo "  Pipeline: scripts/aov-gs/README.md"
 echo "=============================================="

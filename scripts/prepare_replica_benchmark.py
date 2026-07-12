@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Собирает manifest для бенчмарка: ~N кадров RGB + GT semantic из replica_sim_nvs,
-равномерно по сценам (office*/room*).
+Build a benchmark manifest: ~N RGB frames + GT semantics from replica_sim_nvs,
+uniformly across scenes (office*/room*).
 
-Запуск из корня New-Proj::
+Run from the New-Proj root::
 
     python scripts/prepare_replica_benchmark.py --n 100 --out data/benchmarks/replica_sem100/manifest.json
 
-Пути в manifest относительно каталога, где лежит manifest (родитель = out.parent),
-либо задайте --root для префикса.
+Paths in the manifest are relative to the directory containing the manifest (parent = out.parent),
+or set --root for a prefix.
 """
 
 from __future__ import annotations
@@ -33,24 +33,24 @@ def _glob_frames(scene_root: Path) -> tuple[list[Path], list[Path]]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--n", type=int, default=100, help="Всего кадров (по умолчанию 100)")
+    p.add_argument("--n", type=int, default=100, help="Total number of frames (default 100)")
     p.add_argument(
         "--out",
         type=Path,
         default=Path("data/benchmarks/replica_sem100/manifest.json"),
-        help="Куда записать manifest.json",
+        help="Where to write manifest.json",
     )
     p.add_argument(
         "--data_root",
         type=Path,
         default=Path("data/replica_sim_nvs"),
-        help="Корень с подпапками сцен",
+        help="Root with scene subfolders",
     )
     p.add_argument(
         "--scenes",
         type=str,
         default="office0,office1,office2,office3,office4,room0,room1",
-        help="Сцены через запятую (room2 пустая — не включать)",
+        help="Scenes comma-separated (room2 empty — omit)",
     )
     args = p.parse_args()
 
@@ -62,9 +62,9 @@ def main() -> None:
     scenes = [s.strip() for s in args.scenes.split(",") if s.strip()]
     n_scenes = len(scenes)
     if n_scenes == 0:
-        raise SystemExit("Нет сцен")
+        raise SystemExit("No scenes")
 
-    # Распределение кадров: первые (n % k) сцен получают +1 кадр
+    # Frame allocation: the first (n % k) scenes get +1 frame
     n_total = args.n
     base = n_total // n_scenes
     rem = n_total % n_scenes
@@ -100,7 +100,7 @@ def main() -> None:
             )
             sid += 1
 
-    # Пути в manifest — относительно New-Proj (короткие)
+    # Paths in manifest — relative to New-Proj (short)
     def rel(p: Path) -> str:
         try:
             return str(p.relative_to(proj))
@@ -115,7 +115,7 @@ def main() -> None:
         "version": 1,
         "n_samples": len(samples),
         "info_semantic": "data/replica_v1/office_0/habitat/info_semantic.json",
-        "note": "Классы Replica: имена как в info_semantic (например chair, base-cabinet).",
+        "note": "Replica classes: names as in info_semantic (e.g. chair, base-cabinet).",
         "samples": samples,
     }
     out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

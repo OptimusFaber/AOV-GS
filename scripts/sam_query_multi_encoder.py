@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-SAM (все автомаски) + ранжирование по текстовому запросу:
+SAM (all auto-masks) + ranking by text query:
 
-1) **OpenAI CLIP** (ViT-B-16, ``pretrained=openai``) — оригинальный CLIP, 512d.
-2) Ровно **6** автоэнкодеров: ``<ckpt_root>/<3|4|8|16|32|64>/best_ckpt.pth`` — AE на **Laion CLIP**
-   (``laion2b_s34b_b88k``), как при обучении в репозитории.
+1) **OpenAI CLIP** (ViT-B-16, ``pretrained=openai``) — original CLIP, 512d.
+2) Exactly **6** autoencoders: ``<ckpt_root>/<3|4|8|16|32|64>/best_ckpt.pth`` — AE on **Laion CLIP**
+   (``laion2b_s34b_b88k``), as trained in this repository.
 
-**Итого 7 PNG** (по умолчанию): оригинальный CLIP + 6 усечённых латентностей.
+**7 PNGs total** (default): original CLIP + 6 truncated latents.
 
-**Релевантные маски по кластерам** (как ``find_clusters`` в ``query_language_field.py``):
-центроиды SAM-масок в 2D → DBSCAN → кластеры сортируются по **сумме** косинусов;
-лучшая маска = **argmax косинуса внутри победившего кластера**. При отсутствии кластеров —
-глобальный argmax. Отключить: ``--no_cluster``.
+**Relevant masks by clusters** (like ``find_clusters`` in ``query_language_field.py``):
+2D SAM-mask centroids → DBSCAN → clusters sorted by **sum** of cosines;
+best mask = **argmax cosine inside the winning cluster**. If no clusters —
+global argmax. Disable with ``--no_cluster``.
 
-**Веса оригинального CLIP (OpenAI):** не лежат в репозитории; ``open_clip`` качает их в кэш
-Hugging Face, обычно ``~/.cache/huggingface/hub/`` (репозиторий вида
-``models--openai--CLIP-ViT-B-16-*`` / blob-файлы). Загрузка: ``ViT-B-16`` + ``pretrained=openai``.
+**Original CLIP (OpenAI) weights:** not in the repo; ``open_clip`` downloads them into the
+Hugging Face cache, usually ``~/.cache/huggingface/hub/`` (repo like
+``models--openai--CLIP-ViT-B-16-*`` / blob files). Load: ``ViT-B-16`` + ``pretrained=openai``.
 
-Пример::
+Example::
 
     python scripts/sam_query_multi_encoder.py \\
         --image results/.../frame_000109.jpg \\
@@ -25,13 +25,13 @@ Hugging Face, обычно ``~/.cache/huggingface/hub/`` (репозиторий
         --sam_ckpt ckpts/sam_vit_b_01ec64.pth \\
         --ckpt_root ckpt/office0
 
-Файлы в ``<stem>_encoder_vis/``:
+Files under ``<stem>_encoder_vis/``:
 
 - ``semantic__openai_clip.png``
-- ``semantic__ae_3.png`` … ``semantic__ae_64.png`` (из соответствующих подпапок)
+- ``semantic__ae_3.png`` … ``semantic__ae_64.png`` (from the corresponding subfolders)
 
-Laion 512d печатается в лог; отдельный PNG — только с ``--save_laion_512d``.
-Отключить запись: ``--no_save``. Каталог: ``--out_dir``.
+Laion 512d is printed to the log; a separate PNG only with ``--save_laion_512d``.
+Disable saving: ``--no_save``. Directory: ``--out_dir``.
 """
 
 from __future__ import annotations
@@ -44,14 +44,14 @@ import cv2
 import numpy as np
 import torch
 
-# scripts/ на PYTHONPATH, чтобы импортировать sam_query_match
+# scripts/ on PYTHONPATH to import sam_query_match
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import sam_query_match as sqm  # noqa: E402
 
-# Подпапки office0 с размерностью латента (best_ckpt.pth в каждой)
+# office0 subfolders named by latent dim (best_ckpt.pth in each)
 DEFAULT_AE_SUBDIRS = ("3", "4", "8", "16", "32", "64")
 
 
@@ -60,7 +60,7 @@ def _parse_ae_subdirs(s: str) -> tuple[str, ...]:
 
 
 def _resolve_office0_ae_ckpts(root: Path, subdirs: tuple[str, ...]) -> list[tuple[str, Path]]:
-    """``<root>/<name>/best_ckpt.pth`` или ``best.pth``."""
+    """``<root>/<name>/best_ckpt.pth`` or ``best.pth``."""
     out: list[tuple[str, Path]] = []
     for name in subdirs:
         d = root / name
@@ -70,18 +70,18 @@ def _resolve_office0_ae_ckpts(root: Path, subdirs: tuple[str, ...]) -> list[tupl
         if p.is_file():
             out.append((name, p))
         else:
-            print(f"  [warn] нет best_ckpt.pth / best.pth в {d} — пропуск latent {name}")
+            print(f"  [warn] no best_ckpt.pth / best.pth in {d} — skip latent {name}")
     return out
 
 
 def _cosine_scores(img_emb: torch.Tensor, q: torch.Tensor) -> np.ndarray:
-    """Косинусное сходство каждой маски с запросом, (N,) float."""
+    """Cosine similarity of each mask to the query, (N,) float."""
     sim = (img_emb.float() * q.float()).sum(dim=-1)
     return sim.detach().cpu().numpy()
 
 
 def _mask_centroids_xy(masks_all: list) -> np.ndarray:
-    """Центроид каждой маски в пикселях (x, y), форма (N, 2)."""
+    """Centroid of each mask in pixels (x, y), shape (N, 2)."""
     out = np.zeros((len(masks_all), 2), dtype=np.float64)
     for i, m in enumerate(masks_all):
         seg = m["segmentation"]
@@ -100,7 +100,7 @@ def _find_clusters_2d(
     eps: float,
     min_samples: int,
 ) -> list[dict]:
-    """DBSCAN по 2D-точкам; кластеры с ``total_score = sum(cos)``, как в ``query_language_field.find_clusters``."""
+    """DBSCAN on 2D points; clusters with ``total_score = sum(cos)``, as in ``query_language_field.find_clusters``."""
     from sklearn.cluster import DBSCAN
 
     db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(xy)
@@ -134,9 +134,9 @@ def pick_best_mask_clustered(
     use_clusters: bool,
 ) -> tuple[int, list[dict]]:
     """
-    Возвращает индекс маски и список кластеров (пусто, если отключено или только шум).
-    Логика выбора кластера — как у Gaussians в 3D: максимум ``sum(scores)`` в кластере,
-    затем лучшая маска по своему cos внутри этого кластера.
+    Returns mask index and cluster list (empty if disabled or noise-only).
+    Cluster selection logic — same as 3D Gaussians: max ``sum(scores)`` in a cluster,
+    then best mask by its own cos inside that cluster.
     """
     n = len(scores)
     if not use_clusters:
@@ -169,17 +169,17 @@ def main() -> None:
     p.add_argument(
         "--ckpt_root",
         default="ckpt/office0",
-        help="Корень (office0): подпапки 3,4,8,16,32,64 с best_ckpt.pth",
+        help="Root (office0): subfolders 3,4,8,16,32,64 with best_ckpt.pth",
     )
     p.add_argument(
         "--ae_subdirs",
         default=",".join(DEFAULT_AE_SUBDIRS),
-        help=f"Подпапки latent через запятую (по умолчанию: {','.join(DEFAULT_AE_SUBDIRS)})",
+        help=f"Latent subfolders comma-separated (default: {','.join(DEFAULT_AE_SUBDIRS)})",
     )
     p.add_argument(
         "--save_laion_512d",
         action="store_true",
-        help="Дополнительно сохранить semantic__laion_512d.png (8-е изображение)",
+        help="Also save semantic__laion_512d.png (8th image)",
     )
     p.add_argument(
         "--device",
@@ -190,41 +190,41 @@ def main() -> None:
     p.add_argument(
         "--out_dir",
         default=None,
-        help="Каталог для PNG (по умолчанию: рядом с кадром, <stem>_encoder_vis/)",
+        help="PNG output directory (default: next to the frame, <stem>_encoder_vis/)",
     )
     p.add_argument(
         "--no_save",
         action="store_true",
-        help="Не сохранять изображения (только лог в консоль)",
+        help="Do not save images (console log only)",
     )
     p.add_argument(
         "--no_cluster",
         action="store_true",
-        help="Не использовать DBSCAN по центроидам; только глобальный argmax по cos",
+        help="Do not use DBSCAN on centroids; only global argmax by cos",
     )
     p.add_argument(
         "--mask_top_percentile",
         type=float,
         default=15.0,
-        help="Верхний процент масок по cos для DBSCAN (как top_percentile у Gaussians; по умолчанию 15)",
+        help="Top percent of masks by cos for DBSCAN (like Gaussian top_percentile; default 15)",
     )
     p.add_argument(
         "--dbscan_eps_px",
         type=float,
         default=None,
-        help="DBSCAN eps в пикселях; если не задан — dbscan_eps_frac * min(H,W)",
+        help="DBSCAN eps in pixels; if unset — dbscan_eps_frac * min(H,W)",
     )
     p.add_argument(
         "--dbscan_eps_frac",
         type=float,
         default=0.08,
-        help="Если --dbscan_eps_px не задан: eps = frac * min(H,W) (по умолчанию 0.08)",
+        help="If --dbscan_eps_px unset: eps = frac * min(H,W) (default 0.08)",
     )
     p.add_argument(
         "--dbscan_min_samples",
         type=int,
         default=3,
-        help="DBSCAN min_samples для центроидов масок (по умолчанию 3)",
+        help="DBSCAN min_samples for mask centroids (default 3)",
     )
     args = p.parse_args()
     ae_subdirs = _parse_ae_subdirs(args.ae_subdirs)
@@ -263,7 +263,7 @@ def main() -> None:
     )
     centroids_xy = _mask_centroids_xy(masks_all)
 
-    # ----- 1) OpenAI CLIP (оригинальный) -----
+    # ----- 1) OpenAI CLIP (original) -----
     print("OpenAI CLIP (ViT-B-16, pretrained=openai)")
     clip_oai, tok_oai, pre_oai = sqm.load_clip("ViT-B-16", "openai", device)
     img_oai = sqm.embed_masks_clip(image_rgb, masks_all, clip_oai, pre_oai, device)
@@ -301,8 +301,8 @@ def main() -> None:
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    # ----- 2) Laion CLIP — 512d ранжирование + эмбеддинги для AE -----
-    print("\nLaion CLIP (ViT-B-16, laion2b_s34b_b88k) — 512d и AE из", root)
+    # ----- 2) Laion CLIP — 512d ranking + embeddings for AE -----
+    print("\nLaion CLIP (ViT-B-16, laion2b_s34b_b88k) — 512d and AE from", root)
     clip_lai, tok_lai, pre_lai = sqm.load_clip("ViT-B-16", "laion2b_s34b_b88k", device)
     img_lai = sqm.embed_masks_clip(image_rgb, masks_all, clip_lai, pre_lai, device)
     q_lai = sqm.embed_query(args.query, clip_lai, tok_lai, device, None)
@@ -317,7 +317,7 @@ def main() -> None:
     )
     max_lai = float(scores_lai[best_lai])
     order_lai = np.argsort(-scores_lai)
-    print("  [512d, без сжатия]")
+    print("  [512d, no compression]")
     if use_cl and cl_lai:
         c0 = cl_lai[0]
         print(
@@ -337,7 +337,7 @@ def main() -> None:
 
     ckpt_list = _resolve_office0_ae_ckpts(root, ae_subdirs)
     if not ckpt_list:
-        print(f"  [warn] Ни одного best_ckpt.pth в подпапках {ae_subdirs} под {root}")
+        print(f"  [warn] No best_ckpt.pth in subfolders {ae_subdirs} under {root}")
     rows: list[tuple[str, int, float]] = []
 
     for latent_name, ckpt_path in ckpt_list:
@@ -384,7 +384,7 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-    # Сводка: 1 + 6 методов (Laion только справочно в логе выше)
+    # Summary: 1 + 6 methods (Laion only as reference in the log above)
     print("\n--- Summary (1 OpenAI + 6 AE = 7 overlays) ---")
     print(f"{'method':<48} {'best_idx':>8}  {'cos':>8}")
     print(f"{'CLIP OpenAI (512d)':<48} {best_oai:>8}  {max_oai:>8.4f}")

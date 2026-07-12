@@ -24,13 +24,13 @@ from src.utils.general_utils import InfoPrinter
 
 SEMANTIC_PICK_BANNER = """
 #######################
-#      Выбор семантики          #
+#      Semantic selection        #
 #######################
 """
 
 
 class ActiveGSHybridPlanner(ActiveGSPlanner):
-    """Геометрия + семантическая новизна SAM+CLIP на первом этапе исследования."""
+    """Geometry + SAM+CLIP semantic novelty on the first exploration stage."""
 
     def __init__(
         self,
@@ -138,7 +138,7 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
         geo_weights: torch.Tensor = None,
     ) -> Optional[torch.Tensor]:
         """
-        Семантические веса только для top-K по геометрии (остальные = 1.0).
+        Semantic weights only for geometry top-K (others = 1.0).
         """
         if not self.use_semantic_exploration():
             return None
@@ -160,7 +160,7 @@ class ActiveGSHybridPlanner(ActiveGSPlanner):
                 self.__class__.__name__,
             )
 
-        # Сначала банк keyframe-эмбеддингов (без SAM на кандидатах).
+        # First the keyframe embedding bank (no SAM on candidates).
         bank_masks = self._sem_scorer.refresh_bank(
             keyframe_ids, keyframe_list=gs_slam.keyframe_list
         )

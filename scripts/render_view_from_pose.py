@@ -4,28 +4,28 @@ Render a 2D RGB view of the trained Gaussian splat from a **robot / camera pose*
 
 RU
 --
-Использует тот же пайплайн, что валидация / query-скрипты AOV-GS-V2: загрузка ``params.npz`` через
-``LangSplatam`` и ``render_rgb`` (``diff_gaussian_rasterization``, как в ``query_language_field.py``).
+Uses the same pipeline as AOV-GS validation / query scripts: load ``params.npz`` via
+``LangSplatam`` and ``render_rgb`` (``diff_gaussian_rasterization``, as in ``query_language_field.py``).
 
-Поза для рендера — матрица **world → camera** (``w2c``) в системе координат **обучающего** SplaTAM
-(тот же мир, что ``data/Replica/<scene>/traj.txt``). Для абсолютных **c2w** из ``replica_sim_nvs``
-(как в ``eval_helper.py`` при ``align_eval_world``): ``w2c = inv(c2w_nvs) @ c2w_train0``, где
-``c2w_train0`` — первая строка **Replica**, не обязательно первая строка NVS-файла.
+Render pose is a **world → camera** (``w2c``) matrix in the **training** SplaTAM coordinate frame
+(same world as ``data/Replica/<scene>/traj.txt``). For absolute **c2w** from ``replica_sim_nvs``
+(as in ``eval_helper.py`` with ``align_eval_world``): ``w2c = inv(c2w_nvs) @ c2w_train0``, where
+``c2w_train0`` is the first **Replica** row, not necessarily the first NVS-file row.
 
-**Режим ``--from_nvs_eval``:** как ``scripts/run_nvs_validation`` — загрузка cfg → SLAM →
-``load_params``, поза из ``dataset_eval`` с той же формулой ``gt_w2c``, что ``eval_result``.
-Рендер **как в** ``src/slam/splatam/eval_helper.eval`` (``transform_to_frame`` +
-``setup_camera`` с **первым кадром**), а не ``LangSplatam.render_rgb`` — иначе вид не совпадает с
-``PR/frame_*.png`` / ``rendered_rgb/gs_*.png`` из eval.
-Флаги ``--width`` / ``--height`` при необходимости только масштабируют результат; для пиксель-в-пиксель
-с eval их лучше не задавать.
+**``--from_nvs_eval`` mode:** like ``scripts/run_nvs_validation`` — load cfg → SLAM →
+``load_params``, pose from ``dataset_eval`` with the same ``gt_w2c`` formula as ``eval_result``.
+Render **as in** ``src/slam/splatam/eval_helper.eval`` (``transform_to_frame`` +
+``setup_camera`` with the **first frame**), not ``LangSplatam.render_rgb`` — otherwise the view will not match
+``PR/frame_*.png`` / ``rendered_rgb/gs_*.png`` from eval.
+``--width`` / ``--height`` only scale the result when needed; for pixel-perfect match
+with eval, prefer leaving them unset.
 
-**Почему ``--traj .../replica_sim_nvs/...`` ломался:** якорь ``inv(c2w_i)@c2w_traj[0]`` верен только если
-первая NVS-поза совпадает с первой Replica-позой; иначе кадр 0 может казаться верным, а следующие — нет.
-Частый случай: при генерации ``results_habitat`` кадры с ``too_close`` **пропускаются**
-(``generate_Replica_NVS_data.py``), и первая строка ``traj.txt`` — это первый **сохранённый** кадр, не
-обязательно совпадающий с Replica[0]. По умолчанию скрипт выравнивает через
-``data/Replica/<scene>/traj.txt`` (см. ``--traj_align``).
+**Why ``--traj .../replica_sim_nvs/...`` broke:** anchor ``inv(c2w_i)@c2w_traj[0]`` is correct only if
+the first NVS pose matches the first Replica pose; otherwise frame 0 may look right and later ones wrong.
+Common case: when generating ``results_habitat``, ``too_close`` frames are **skipped**
+(``generate_Replica_NVS_data.py``), and the first ``traj.txt`` row is the first **saved** frame, not
+necessarily matching Replica[0]. By default the script aligns via
+``data/Replica/<scene>/traj.txt`` (see ``--traj_align``).
 
 EN
 --
@@ -47,30 +47,30 @@ Replica row 0. Default is Replica train alignment when that file exists (see ``-
 
 Examples
 --------
-  # Явная w2c (16 чисел) уже в системе чекпойнта
+  # Explicit w2c (16 numbers) already in checkpoint coordinates
   python scripts/render_view_from_pose.py \\
     --checkpoint results/splatam/final/params.npz \\
     --w2c_flat $(cat w2c_row.txt)
 
-  # replica_sim_nvs: по умолчанию якорь — data/Replica/<scene>/traj.txt (как validate_lang_field_traj)
+  # replica_sim_nvs: default anchor is data/Replica/<scene>/traj.txt (like validate_lang_field_traj)
   python scripts/render_view_from_pose.py \\
     --checkpoint .../params.npz \\
     --traj data/replica_sim_nvs/office0/traj.txt --frame 42
 
-  # Старый режим только по NVS: первая строка того же traj как якорь
+  # Legacy NVS-only mode: first row of the same traj as anchor
   python scripts/render_view_from_pose.py ... --traj ... --frame 1 --traj_align traj_first
 
-  # Replica: c2w из траекта + первая поза Replica как якорь обучения
+  # Replica: c2w from traj + first Replica pose as training anchor
   python scripts/render_view_from_pose.py \\
     --checkpoint .../params.npz \\
     --replica_c2w_traj path/to/replica_sim_nvs/traj.txt --frame 10 \\
     --train_traj0 data/Replica/room0/traj.txt
 
-  # JSON: ключ "w2c" или корень = список/строка 4x4
+  # JSON: "w2c" key or root = list/string 4x4
   python scripts/render_view_from_pose.py --checkpoint ... --w2c_json keyframe_poses.json --frame_id 6
 
-  # Тот же w2c, что ``run_nvs_validation`` / ``eval_result`` (dataset_eval + align_eval_world),
-  # один кадр — без полного eval:
+  # Same w2c as ``run_nvs_validation`` / ``eval_result`` (dataset_eval + align_eval_world),
+  # one frame — without full eval:
   python scripts/render_view_from_pose.py --from_nvs_eval --time_idx 4 \\
     --cfg configs/Replica/office0/ActiveOpenSem.py \\
     --result_dir results/Replica/office0/ActiveOpenSem/run_0 \\
@@ -469,8 +469,8 @@ def _maybe_print_pose_diagnostics(args: argparse.Namespace, w2c_np: np.ndarray) 
     j = int(np.argmin(errs))
     print(
         f"[pose] min ‖w2c − gt_w2c_all_frames[k]‖_F over k∈[0,{len(gt)-1}] = {errs[j]:.4f} at k={j}. "
-        "Орбита NVS (replica_sim_nvs) обычно не совпадает с траекторией SLAM при обучении — "
-        "рендер GS по позе из NVS ≠ Habitat пиксель в пиксель даже при верной математике w2c."
+        "The NVS orbit (replica_sim_nvs) usually does not match the SLAM training trajectory — "
+        "GS render from an NVS pose ≠ Habitat pixel-perfect even with correct w2c math."
     )
 
 

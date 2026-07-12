@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 ##################################################
-# Pipeline 1 — Gaussian Splatting без сегментатора
+# Pipeline 1 — Gaussian Splatting without segmenter
 #
-# Конфиг: ActiveGS (SplaTAM + геометрический active_gs, без SAM/CLIP/OneFormer).
-# Результат: только карта гауссианов и оценки SplaTAM, без language_features/.
+# Config: ActiveGS (SplaTAM + geometric active_gs, no SAM/CLIP/OneFormer).
+# Result: Gaussian map and SplaTAM estimates only, no language_features/.
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/pipeline_gs_no_segmenter.sh [SCENE] [SEED] [ENABLE_VIS] [DEBUG]
 #
-# Пример:
+# Example:
 #   bash scripts/aov-gs/pipeline_gs_no_segmenter.sh office0 0 0 0
 ##################################################
 
@@ -35,5 +35,5 @@ bash "${SCRIPT_DIR}/01_slam_exploration.sh" "${SCENE}" "${EXP}" "${SEED}" "${ENA
 
 echo ""
 echo "=== Pipeline 1 finished ==="
-echo "    Gaussians: ${RESULT_DIR}/splatam/final/params0.npz (или params.npz)"
-echo "    (языковые фичи и этапы 2–3 не применяются)"
+echo "    Gaussians: ${RESULT_DIR}/splatam/final/params0.npz (or params.npz)"
+echo "    (language features and stages 2–3 are not applied)"

@@ -88,7 +88,7 @@ PHASE1_JOBS=(
   "room1/run_0"
   "room2/run_0"
 )
-# office2/run_0 — через run_inject_office2_when_gpu1_free.sh (followup)
+# office2/run_0 — via run_inject_office2_when_gpu1_free.sh (followup)
 
 PHASE2_SCENES=(office0 office1 office3 office4 room0 room1 room2)
 PHASE2_RUNS=(${PHASE2_RUNS:-run_1 run_2 run_3})

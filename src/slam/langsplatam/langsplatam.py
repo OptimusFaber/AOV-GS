@@ -1,6 +1,6 @@
 """
 LangSplatam – offline language-field fine-tuning on top of a frozen 3D
-Gaussian Splatting scene produced by ActiveSGM.
+Gaussian Splatting scene produced by AOV-GS exploration (or an ActiveSGM baseline run).
 
 The class:
   1. Loads an existing SplaTAM checkpoint (``params*.npz``).
@@ -147,7 +147,7 @@ class LangSplatam:
         self.topk = int(topk)
         # ``auto``: checkpoint only for latent_dim==64 (saves VRAM on multi-pass).
         # ``on``: always checkpoint each 3-ch pass (low VRAM, slower).
-        # ``off``: one autograd graph for all passes concatenated (``склейка``; fast, high VRAM).
+        # ``off``: one autograd graph for all passes concatenated (fast, high VRAM).
         if render_checkpoint not in ("auto", "on", "off"):
             raise ValueError("render_checkpoint must be 'auto', 'on', or 'off'")
         self._render_checkpoint_mode = render_checkpoint

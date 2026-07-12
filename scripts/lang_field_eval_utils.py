@@ -16,9 +16,72 @@ import torch.nn.functional as F
 import query_language_field as qlf
 
 ALL_LEVELS: tuple[str, ...] = ("s", "m", "l")
+
+LANG_FIELD_CKPT_NAMES: tuple[str, ...] = ("best.pt", "lang_field.pt")
 LEVEL_TO_CKPT_SUFFIX: dict[str, int] = {"s": 1, "m": 2, "l": 3}
 
-# Matches ``val-results-sml-levels/`` (s/m/l pyramid, best thresh 0.55 in sweep).
+# ScanNet ``labels.ply`` / Habitat semantic GT uses NYU40 label ids (not OneFormer class_info ids).
+SCANNET_NYU40_ID_TO_NAME: dict[int, str] = {
+    0: "void",
+    1: "wall",
+    2: "floor",
+    3: "cabinet",
+    4: "bed",
+    5: "chair",
+    6: "sofa",
+    7: "table",
+    8: "door",
+    9: "window",
+    10: "bookshelf",
+    11: "picture",
+    12: "counter",
+    13: "blinds",
+    14: "desk",
+    15: "shelves",
+    16: "curtain",
+    17: "dresser",
+    18: "pillow",
+    19: "mirror",
+    20: "floor_mat",
+    21: "clothes",
+    22: "ceiling",
+    23: "books",
+    24: "refrigerator",
+    25: "television",
+    26: "paper",
+    27: "towel",
+    28: "shower_curtain",
+    29: "box",
+    30: "whiteboard",
+    31: "person",
+    32: "nightstand",
+    33: "toilet",
+    34: "sink",
+    35: "lamp",
+    36: "bathtub",
+    37: "bag",
+    38: "otherstructure",
+    39: "otherfurniture",
+    40: "otherprop",
+}
+
+# Optional CLIP query aliases (NYU40 GT name -> OpenSem / class_info name).
+SCANNET_NYU40_QUERY_ALIASES: dict[str, str] = {
+    "dresser": "chest_of_drawers",
+    "bookshelf": "shelving",
+    "shelves": "shelving",
+    "television": "tv_monitor",
+    "floor_mat": "cushion",
+    "shower_curtain": "shower",
+    "lamp": "lighting",
+    "desk": "table",
+    "nightstand": "chest_of_drawers",
+    "otherfurniture": "furniture",
+    "otherprop": "objects",
+    "otherstructure": "misc",
+}
+
+# Matches ``results/metrics-archive/val-results-sml-levels/`` (s/m/l pyramid, best thresh 0.55).
 EVAL_PRESET_VAL_RESULTS_SML_LEVELS = "val_results_sml_levels"
 
 
@@ -81,6 +144,13 @@ def _num_key(p: Path) -> int:
 def load_frame_sem_pairs(results_habitat: Path) -> list[tuple[int, Path]]:
     sem_dir = results_habitat / "semantic"
     sem_files = {_num_key(p): p for p in sorted(sem_dir.glob("semantic_map_*.npy"), key=_num_key)}
+    if not sem_files:
+        for p in sorted(sem_dir.glob("semantic*.npy"), key=_num_key):
+            if p.name.startswith("semantic_map_"):
+                continue
+            k = _num_key(p)
+            if k >= 0:
+                sem_files[k] = p
     return sorted(((k, sem_files[k]) for k in sem_files.keys()), key=lambda t: t[0])
 
 
@@ -99,6 +169,73 @@ def load_id_to_canonical_name(info_semantic_path: Path) -> dict[int, str]:
     data = json.loads(info_semantic_path.read_text(encoding="utf-8"))
     return {int(c["id"]): str(c["name"]).strip() for c in data["classes"]}
 
+
+def is_scannet_scene_name(scene: str) -> bool:
+    return bool(re.match(r"^scene\d{4}_\d{2}$", str(scene)))
+
+
+def scannet_nyu40_info_semantic_path(root: Path | None = None) -> Path:
+    base = root if root is not None else Path(__file__).resolve().parents[1]
+    return base / "configs" / "ScanNet" / "nyu40_info_semantic.json"
+
+
+def write_scannet_nyu40_info_semantic(path: Path) -> Path:
+    """Write ``info_semantic.json`` with NYU40 ids for ScanNet Habitat GT."""
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    classes = [{"id": i, "name": n} for i, n in sorted(SCANNET_NYU40_ID_TO_NAME.items())]
+    path.write_text(json.dumps({"classes": classes}, indent=2), encoding="utf-8")
+    return path
+
+
+def ensure_scannet_nyu40_info_semantic(path: Path | None = None) -> Path:
+    out = path.expanduser().resolve() if path is not None else scannet_nyu40_info_semantic_path()
+    if not out.is_file():
+        write_scannet_nyu40_info_semantic(out)
+    return out
+
+
+def scannet_query_class_name(nyu40_name: str) -> str:
+    key = nyu40_name.strip().lower().replace("-", "_")
+    return SCANNET_NYU40_QUERY_ALIASES.get(key, key)
+
+
+def sample_semantic_unique_ids(
+    sem_paths_by_fid: dict[int, Path],
+    frame_ids: list[int],
+    *,
+    max_frames: int = 8,
+) -> list[int]:
+    seen: set[int] = set()
+    for fid in frame_ids[:max_frames]:
+        p = sem_paths_by_fid.get(fid)
+        if p is None or not p.is_file():
+            continue
+        sem = np.load(str(p)).astype(np.int64)
+        if sem.ndim == 3:
+            sem = sem.squeeze()
+        seen.update(int(x) for x in np.unique(sem))
+    return sorted(seen)
+
+
+def nvs_semantics_have_labels(sem_dir: Path, *, max_files: int = 24) -> bool:
+    """True if any ``semantic*.npy`` under ``sem_dir`` contains labels other than 0."""
+    sem_dir = sem_dir.expanduser().resolve()
+    if not sem_dir.is_dir():
+        return False
+    files = sorted(sem_dir.glob("semantic_map_*.npy"), key=_num_key)
+    if not files:
+        files = sorted(
+            (p for p in sem_dir.glob("semantic*.npy") if not p.name.startswith("semantic_map_")),
+            key=_num_key,
+        )
+    for path in files[:max_files]:
+        sem = np.load(str(path)).astype(np.int64)
+        if sem.ndim == 3:
+            sem = sem.squeeze()
+        if np.any(sem != 0):
+            return True
+    return False
 
 def resolve_class_id(class_name: str, name_to_id: dict[str, int]) -> int:
     q = class_name.strip().lower()
@@ -226,6 +363,27 @@ def build_text_query(
     )
 
 
+def resolve_lang_field_pt(lang_dir: Path) -> Path:
+    """Return lang-field weights in *lang_dir*; prefer ``best.pt`` over ``lang_field.pt``."""
+    lang_dir = Path(lang_dir).expanduser().resolve()
+    for name in LANG_FIELD_CKPT_NAMES:
+        p = lang_dir / name
+        if p.is_file():
+            return p
+    raise FileNotFoundError(
+        f"No lang field checkpoint in {lang_dir} (tried: {', '.join(LANG_FIELD_CKPT_NAMES)})",
+    )
+
+
+def resolve_lang_field_pt_optional(lang_dir: Path) -> Path | None:
+    lang_dir = Path(lang_dir).expanduser().resolve()
+    for name in LANG_FIELD_CKPT_NAMES:
+        p = lang_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
 def resolve_lang_field_paths(
     result_dir: Path,
     *,
@@ -242,9 +400,130 @@ def resolve_lang_field_paths(
         if explicit[lvl]:
             p = Path(explicit[lvl]).expanduser().resolve()
         else:
-            p = (result_dir / f"lang_field_{lvl}k{codebook_size}_l{vq_layer_num}" / "lang_field.pt").resolve()
+            subdir = (result_dir / f"lang_field_{lvl}k{codebook_size}_l{vq_layer_num}").resolve()
+            p = resolve_lang_field_pt_optional(subdir) or (subdir / LANG_FIELD_CKPT_NAMES[0])
         out[lvl] = p
     return out
+
+
+def discover_lang_field_levels(
+    result_dir: Path,
+    *,
+    codebook_size: int = 64,
+    vq_layer_num: int = 1,
+) -> tuple[str, ...]:
+    """Levels s/m/l that have ``best.pt`` or ``lang_field.pt`` on disk."""
+    paths = resolve_lang_field_paths(
+        result_dir,
+        levels=ALL_LEVELS,
+        codebook_size=codebook_size,
+        vq_layer_num=vq_layer_num,
+    )
+    return tuple(lvl for lvl in ALL_LEVELS if paths[lvl].is_file())
+
+
+def resolve_lang_field_paths_legacy(
+    result_dir: Path,
+    *,
+    levels: tuple[str, ...],
+    latent_dim: int,
+    lang_field_s: str | None = None,
+    lang_field_m: str | None = None,
+    lang_field_l: str | None = None,
+) -> dict[str, Path]:
+    """LangSplatV1 layout: ``lang_field_{level}{D}/lang_field.pt`` (e.g. lang_field_m16)."""
+    explicit = {"s": lang_field_s, "m": lang_field_m, "l": lang_field_l}
+    out: dict[str, Path] = {}
+    for lvl in levels:
+        if explicit[lvl]:
+            p = Path(explicit[lvl]).expanduser().resolve()
+        else:
+            subdir = (result_dir / f"lang_field_{lvl}{latent_dim}").resolve()
+            p = resolve_lang_field_pt_optional(subdir) or (subdir / LANG_FIELD_CKPT_NAMES[0])
+        out[lvl] = p
+    return out
+
+
+def default_ae_architecture(latent_dim: int) -> tuple[list[int], list[int]]:
+    """Encoder/decoder hidden dims matching ``02_train_clip_autoencoder_langsplatv1.sh``."""
+    arch: dict[int, tuple[list[int], list[int]]] = {
+        3: ([256, 128, 3], [128, 256, 512]),
+        4: ([256, 64, 4], [64, 256, 512]),
+        8: ([256, 64, 8], [64, 256, 512]),
+        16: ([256, 128, 16], [128, 256, 512]),
+        32: ([256, 128, 32], [128, 256, 512]),
+        64: ([256, 128, 64], [128, 256, 512]),
+    }
+    if latent_dim not in arch:
+        raise ValueError(
+            f"Unsupported latent_dim={latent_dim}; expected one of {sorted(arch)}",
+        )
+    enc, dec = arch[latent_dim]
+    return list(enc), list(dec)
+
+
+def pick_ae_ckpt(scene_dir: Path, latent_dim: int, device: str = "cpu") -> Path | None:
+    """Pick AE checkpoint under ``ckpt/<scene>/<latent_dim>/`` (several naming conventions)."""
+    return resolve_ae_ckpt_path(scene_dir, latent_dim, device=device)
+
+
+def resolve_ae_ckpt_path(
+    scene_dir: Path,
+    latent_dim: int,
+    *,
+    device: str = "cpu",
+) -> Path | None:
+    """
+    Resolve AE weights for legacy LangSplatV1 validation.
+
+    Search order in ``<scene_dir>/<latent_dim>/``:
+      1. best.pth       (project convention)
+      2. best_ckpt.pth  (train_language_autoencoder.py default)
+      3. latest ``{epoch}_ckpt.pth`` if nothing else matches
+    """
+    dim_dir = Path(scene_dir) / str(latent_dim)
+    if not dim_dir.is_dir():
+        return None
+
+    for name in ("best.pth", "best_ckpt.pth"):
+        p = dim_dir / name
+        if p.is_file():
+            return p.resolve()
+
+    candidates: list[tuple[int, Path]] = []
+    for p in sorted(dim_dir.glob("*.pth")):
+        try:
+            if _infer_latent_from_ae_ckpt(p, device) == latent_dim:
+                stem = p.stem
+                epoch = 0
+                if stem.endswith("_ckpt"):
+                    try:
+                        epoch = int(stem.replace("_ckpt", ""))
+                    except ValueError:
+                        epoch = 0
+                candidates.append((epoch, p))
+        except Exception:
+            continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0])
+    return candidates[-1][1].resolve()
+
+
+def _infer_latent_from_ae_ckpt(ae_ckpt: Path, device: str) -> int:
+    state = torch.load(str(ae_ckpt), map_location=torch.device(device))
+    if not isinstance(state, dict):
+        raise ValueError(f"{ae_ckpt} is not a state_dict dict")
+    pat = re.compile(r"^encoder\.(\d+)\.weight$")
+    items: list[tuple[int, torch.Tensor]] = []
+    for k, v in state.items():
+        m = pat.match(k)
+        if m and isinstance(v, torch.Tensor) and v.ndim == 2:
+            items.append((int(m.group(1)), v))
+    if not items:
+        raise ValueError(f"Could not infer latent_dim from {ae_ckpt}")
+    items.sort(key=lambda t: t[0])
+    return int(items[-1][1].shape[0])
 
 
 def langsplat_fuse_heatmap(

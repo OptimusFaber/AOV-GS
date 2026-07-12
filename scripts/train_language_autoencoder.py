@@ -1,17 +1,17 @@
 """
-Обучение автоэнкодера языкового поля (LangSplat-совместимый).
+Train language-field autoencoder (LangSplat-compatible).
 
-Соответствует LangSplat/autoencoder/train.py + test.py:
+Matches LangSplat/autoencoder/train.py + test.py:
 
-Шаг 1 — train:
-  Читает все *_f.npy из language_features/
-  Обучает Autoencoder (512 → 3 → 512)
-  Сохраняет лучший чекпоинт best_ckpt.pth
+Step 1 — train:
+  Reads all *_f.npy from language_features/
+  Trains Autoencoder (512 → 3 → 512)
+  Saves best checkpoint best_ckpt.pth
 
-Шаг 2 — test (применение энкодера):
-  Прогоняет все *_f.npy через encoder → (N, 3)
-  Копирует *_s.npy без изменений
-  Сохраняет в language_features_dim3/
+Step 2 — test (apply encoder):
+  Runs all *_f.npy through encoder → (N, 3)
+  Copies *_s.npy unchanged
+  Saves to language_features_dim3/
 
 Usage
 -----
@@ -45,18 +45,18 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Dataset — аналог LangSplat/autoencoder/dataset.py
+# Dataset — analogue of LangSplat/autoencoder/dataset.py
 # ---------------------------------------------------------------------------
 
 class LanguageFeatureDataset(Dataset):
     """
-    Читает все *_f.npy из data_dir, конкатенирует в один большой массив.
-    Запоминает количество масок на файл (data_dic) — нужно для test.py.
+    Reads all *_f.npy from data_dir, concatenates into one large array.
+    Remembers mask count per file (data_dic) — needed for test.py.
     """
     def __init__(self, data_dir: str) -> None:
         data_names = sorted(glob.glob(os.path.join(data_dir, '*_f.npy')))
         if not data_names:
-            raise FileNotFoundError(f"Нет *_f.npy файлов в {data_dir}")
+            raise FileNotFoundError(f"No *_f.npy files in {data_dir}")
 
         self.data_dic = {}  # {stem: n_masks}
         arrays = []
@@ -68,7 +68,7 @@ class LanguageFeatureDataset(Dataset):
                 arrays.append(feats)
 
         self.data = np.concatenate(arrays, axis=0) if arrays else np.zeros((0, 512), dtype=np.float32)
-        logger.info("Загружено %d масок из %d файлов.", self.data.shape[0], len(data_names))
+        logger.info("Loaded %d masks from %d files.", self.data.shape[0], len(data_names))
 
     def __len__(self) -> int:
         return self.data.shape[0]
@@ -78,7 +78,7 @@ class LanguageFeatureDataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
-# Шаг 1: Обучение — аналог LangSplat/autoencoder/train.py
+# Step 1: Training — analogue of LangSplat/autoencoder/train.py
 # ---------------------------------------------------------------------------
 
 def train(args: argparse.Namespace) -> None:
@@ -126,12 +126,12 @@ def train(args: argparse.Namespace) -> None:
         if epoch % 10 == 0:
             torch.save(model.state_dict(), os.path.join(ckpt_dir, f'{epoch}_ckpt.pth'))
 
-    logger.info("Лучший epoch: %d  loss=%.8f", best_epoch, best_loss)
-    logger.info("Чекпоинт сохранён → %s", os.path.join(ckpt_dir, 'best_ckpt.pth'))
+    logger.info("Best epoch: %d  loss=%.8f", best_epoch, best_loss)
+    logger.info("Checkpoint saved → %s", os.path.join(ckpt_dir, 'best_ckpt.pth'))
 
 
 # ---------------------------------------------------------------------------
-# Шаг 2: Применение энкодера — аналог LangSplat/autoencoder/test.py
+# Step 2: Apply encoder — analogue of LangSplat/autoencoder/test.py
 # ---------------------------------------------------------------------------
 
 def test(args: argparse.Namespace) -> None:
@@ -141,7 +141,7 @@ def test(args: argparse.Namespace) -> None:
     os.makedirs(output_dir, exist_ok=True)
     ckpt_path = os.path.join('ckpt', args.dataset_name, str(latent_dim), 'best_ckpt.pth')
 
-    # Копируем *_s.npy без изменений (как в LangSplat test.py)
+    # Copy *_s.npy unchanged (as in LangSplat test.py)
     for fname in os.listdir(data_dir):
         if fname.endswith('_s.npy'):
             shutil.copy(os.path.join(data_dir, fname), os.path.join(output_dir, fname))
@@ -162,14 +162,14 @@ def test(args: argparse.Namespace) -> None:
 
     features_encoded = np.concatenate(all_encoded, axis=0)  # (N_total, latent_dim)
 
-    # Сохраняем по файлам — восстанавливаем разбиение как в test.py
+    # Save per file — restore split as in test.py
     start = 0
     for stem, n in dataset.data_dic.items():
         path = os.path.join(output_dir, stem + '.npy')
         np.save(path, features_encoded[start:start + n])
         start += n
 
-    logger.info("Сжатые фичи (dim=%d) сохранены в %s", latent_dim, output_dir)
+    logger.info("Compressed features (dim=%d) saved to %s", latent_dim, output_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -179,37 +179,37 @@ def test(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train LangSplat-compatible language autoencoder.")
     p.add_argument('--dataset_path', required=True,
-                   help="Корневая папка датасета (там должна быть language_features/).")
+                   help="Dataset root folder (must contain language_features/).")
     p.add_argument('--dataset_name', required=True,
-                   help="Имя сцены, используется для папки ckpt/{dataset_name}/.")
+                   help="Scene name, used for ckpt/{dataset_name}/ folder.")
     p.add_argument('--num_epochs', type=int, default=100)
     p.add_argument('--lr', type=float, default=1e-4)
     p.add_argument('--encoder_dims', nargs='+', type=int, default=[256, 128, 64],
-                   help="Размерности слоёв энкодера. Последний = latent_dim. "
-                        "По умолчанию [256,128,64] → 64d. "
-                        "Для LangSplat-совместимого 3d: 256 128 64 32 3")
+                   help="Encoder layer dims. Last = latent_dim. "
+                        "Default [256,128,64] → 64d. "
+                        "For LangSplat-compatible 3d: 256 128 64 32 3")
     p.add_argument('--decoder_dims', nargs='+', type=int, default=[128, 256, 512],
-                   help="Размерности слоёв декодера. Последний должен быть 512. "
-                        "По умолчанию [128,256,512]. "
-                        "Для LangSplat-совместимого 3d: 16 32 64 128 256 256 512")
+                   help="Decoder layer dims. Last must be 512. "
+                        "Default [128,256,512]. "
+                        "For LangSplat-compatible 3d: 16 32 64 128 256 256 512")
     p.add_argument(
         '--device',
         default='cuda:0',
         help='Torch device for AE training (default cuda:0).',
     )
     p.add_argument('--skip_train', action='store_true',
-                   help="Пропустить обучение, только применить уже обученный энкодер.")
+                   help="Skip training; only apply an already trained encoder.")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     if not args.skip_train:
-        logger.info("=== Шаг 1: Обучение автоэнкодера ===")
+        logger.info("=== Step 1: Train autoencoder ===")
         train(args)
-    logger.info("=== Шаг 2: Применение энкодера (→ language_features_dim3/) ===")
+    logger.info("=== Step 2: Apply encoder (→ language_features_dim3/) ===")
     test(args)
-    logger.info("Готово.")
+    logger.info("Done.")
 
 
 if __name__ == '__main__':

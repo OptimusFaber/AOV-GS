@@ -2,22 +2,22 @@
 ##################################################
 # Step 1: SLAM exploration + SAM/CLIP extraction (CorrCLIP-style postproc **off**)
 #
-# Результаты (auto run_N если run_* уже есть):
+# Results (auto run_N if run_* already exists):
 #   Passive     → results/Replica/{SCENE}/Passive/run_N/
 #   ActiveGeom  → results/Replica/{SCENE}/ActiveGeom/run_N/
 #   ActiveOpenSem       → results/Replica/{SCENE}/ActiveOpenSem/run_N/
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/01_slam_exploration.sh [SCENE] [EXP] [SEED] [ENABLE_VIS] [DEBUG] [RESULT_RUN] [MASK_COLLECTOR]
 #
-#   RESULT_RUN:      run_0, run_1, … (опционально; иначе auto run_N)
+#   RESULT_RUN:      run_0, run_1, … (optional; else auto run_N)
 #   MASK_COLLECTOR:  sam (default) | corrclip
 #
 #   EXP: ActiveOpenSemGeom | ActiveOpenSemPassive | ActiveOpenSem | ActiveOpenSem_base | ...
 #   ENABLE_VIS: 0 = headless, 1 = live OpenCV windows
 #   DEBUG:      1 = save keyframes/ as JPEG
 #
-# Примеры:
+# Examples:
 #   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSemGeom
 #   bash scripts/aov-gs/01_slam_exploration.sh office0 ActiveOpenSem
 ##################################################

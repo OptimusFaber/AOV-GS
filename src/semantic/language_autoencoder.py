@@ -1,15 +1,15 @@
 """
-Автоэнкодер для сжатия CLIP 512d → latent_dim d (LangSplat-совместимый).
+Autoencoder to compress CLIP 512d → latent_dim d (LangSplat-compatible).
 
-Дефолтная конфигурация (64d):
+Default configuration (64d):
   Encoder: 512 → 256 → 128 → 64  (Linear + BN + ReLU + L2-norm)
   Decoder:  64 → 128 → 256 → 512  (Linear + ReLU + L2-norm)
 
-LangSplat-совместимый вариант (3d):
+LangSplat-compatible variant (3d):
   Encoder: 512 → 256 → 128 → 64 → 32 → 3
   Decoder:   3 → 16  → 32  → 64 → 128 → 256 → 256 → 512
 
-Loss: L2 + 0.001 * cosine  (как в LangSplat autoencoder/train.py)
+Loss: L2 + 0.001 * cosine  (as in LangSplat autoencoder/train.py)
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ import torch.nn.functional as F
 
 class Autoencoder(nn.Module):
     """
-    Автоэнкодер CLIP-фичей: 512d → latent_dim d → 512d.
+    Autoencoder for CLIP features: 512d → latent_dim d → 512d.
 
     Parameters
     ----------
     encoder_hidden_dims : list of int
-        Размерности слоёв энкодера (последний = latent_dim).
-        По умолчанию [256, 128, 64] → latent 64d.
+        Encoder layer dims (last = latent_dim).
+        Default [256, 128, 64] → latent 64d.
     decoder_hidden_dims : list of int
-        Размерности слоёв декодера (последний должен быть 512).
-        По умолчанию [128, 256, 512].
+        Decoder layer dims (last must be 512).
+        Default [128, 256, 512].
     """
 
     def __init__(
@@ -64,20 +64,20 @@ class Autoencoder(nn.Module):
         self.decoder = nn.ModuleList(decoder_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Полный проход AE → восстановленный вектор (L2-нормализован)."""
+        """Full AE forward → reconstructed vector (L2-normalized)."""
         x = self.encode(x)
         x = self.decode(x)
         return x
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """512d → latent_dim (L2-нормализован)."""
+        """512d → latent_dim (L2-normalized)."""
         for m in self.encoder:
             x = m(x)
         x = x / x.norm(dim=-1, keepdim=True)
         return x
 
     def decode(self, x: torch.Tensor) -> torch.Tensor:
-        """latent_dim → 512d (L2-нормализован)."""
+        """latent_dim → 512d (L2-normalized)."""
         for m in self.decoder:
             x = m(x)
         x = x / x.norm(dim=-1, keepdim=True)
@@ -93,5 +93,5 @@ class Autoencoder(nn.Module):
 
     @staticmethod
     def total_loss(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """L2 + 0.001 * cosine — как в LangSplat autoencoder/train.py."""
+        """L2 + 0.001 * cosine — as in LangSplat autoencoder/train.py."""
         return Autoencoder.l2_loss(output, target) + 0.001 * Autoencoder.cos_loss(output, target)

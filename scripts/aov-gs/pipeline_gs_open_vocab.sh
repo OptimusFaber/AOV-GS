@@ -2,8 +2,8 @@
 ##################################################
 # Unified open-vocabulary pipeline (ActiveOpenSem)
 #
-# MASK_COLLECTOR  sam | corrclip   — этап 1
-# LANG_MODE       langsplat | langsplatv2 — этапы 2–3
+# MASK_COLLECTOR  sam | corrclip   — stage 1
+# LANG_MODE       langsplat | langsplatv2 — stages 2–3
 #
 # Usage:
 #   bash scripts/aov-gs/pipeline_gs_open_vocab.sh [SCENE] [SEED] [ENABLE_VIS] [DEBUG] \\

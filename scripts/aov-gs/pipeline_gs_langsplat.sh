@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 ##################################################
-# Pipeline 3 — CLIP + SAM + LangSplat (legacy: автоэнкодер 512→D)
+# Pipeline 3 — CLIP + SAM + LangSplat (legacy: autoencoder 512→D)
 #
-# Конфиг: ActiveOpenSem (SplaTAM + SAM/CLIP → language_features/).
-# Этапы: 01 SLAM → 02_train_clip_autoencoder → 03_train_gaussian_lang_field (--legacy).
+# Config: ActiveOpenSem (SplaTAM + SAM/CLIP → language_features/).
+# Stages: 01 SLAM → 02_train_clip_autoencoder → 03_train_gaussian_lang_field (--legacy).
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/pipeline_gs_langsplat.sh \\
 #       [SCENE] [SEED] [ENABLE_VIS] [DEBUG] \\
 #       [LATENT_DIM] [AE_EPOCHS] [DEVICE] [SAM_LEVEL] [LANG_ITERS] [RENDER_CKPT]
 #
-# Пример (по умолчанию office0, latent 64, уровень SAM s):
+# Example (default office0, latent 64, SAM level s):
 #   bash scripts/aov-gs/pipeline_gs_langsplat.sh
 #
-# Пример с визуализацией:
+# Example with visualization:
 #   bash scripts/aov-gs/pipeline_gs_langsplat.sh office0 0 1 0 64 100 cuda:0 s 30000 auto
 ##################################################
 

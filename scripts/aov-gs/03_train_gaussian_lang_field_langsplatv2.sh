@@ -2,44 +2,44 @@
 ##################################################
 # Step 3: Train LangSplatV2 language field.
 #
-# Читает params0.npz + keyframe_poses.json + language_features/,
-# обучает codebook + sparse coefficients и сохраняет lang_field.pt.
+# Reads params0.npz + keyframe_poses.json + language_features/,
+# trains codebook + sparse coefficients and saves lang_field.pt.
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       [RESULT_DIR] [K] [LEVEL] [NUM_ITERS] [DEVICE] [L] [TOPK] [RENDER_CHECKPOINT] [TRAIN_DOWNSCALE]
 #
-# Примеры:
+# Examples:
 #   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64
 #
 #   bash scripts/aov-gs/03_train_gaussian_lang_field.sh \
 #       results/Replica/room0/ActiveOpenSem/run_0 64 s 30000 cuda:1 1 4 auto
 #
-# Все уровни SAM подряд (s → m → l):
+# All SAM levels in sequence (s → m → l):
 #   bash scripts/aov-gs/03_train_gaussian_lang_field_all_levels.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0 64 12000
 #
-# nohup важно оборачивать всю цепочку в bash -c '...', иначе nohup действует только на первый вызов:
+# Important: wrap the whole chain in bash -c '...', otherwise nohup applies only to the first command:
 #   cd /path/to/AOV-GS
 #   nohup bash -c 'bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 s 12000 && \
 #                  bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 m 12000 && \
 #                  bash scripts/aov-gs/03_train_gaussian_lang_field.sh results/... 64 l 12000' \
 #       > train_lang_field.log 2>&1 &
 #
-# Аргументы:
-#   RESULT_DIR         – папка с результатами SLAM (обязательный)
-#   K                  – размер codebook (K), по умолч. 64
-#   LEVEL              – уровень SAM: s/m/l, по умолч. s
-#   NUM_ITERS          – итерации, по умолч. 30000
-#   DEVICE             – cuda:0 / cuda:1, по умолч. cuda:0
-#   L                  – число уровней RVQ (L), по умолч. 1
-#   TOPK               – разрежение top-k по уровням, по умолч. 4
-#   RENDER_CHECKPOINT  – auto | on | off (по умолч. auto)
-#   TRAIN_DOWNSCALE    – масштаб рендера при train (0,1], по умолч. 1.0
-#                        off = склейка графа всех проходов (много VRAM)
-#                        on  = checkpoint на каждый проход (мало VRAM)
-#                        auto = checkpoint только для latent_dim=64
+# Arguments:
+#   RESULT_DIR         – SLAM results directory (required)
+#   K                  – codebook size (K), default 64
+#   LEVEL              – SAM level: s/m/l, default s
+#   NUM_ITERS          – iterations, default 30000
+#   DEVICE             – cuda:0 / cuda:1, default cuda:0
+#   L                  – number of RVQ levels (L), default 1
+#   TOPK               – top-k sparsification per level, default 4
+#   RENDER_CHECKPOINT  – auto | on | off (default auto)
+#   TRAIN_DOWNSCALE    – render scale during train (0,1], default 1.0
+#                        off = stitch graph of all passes (high VRAM)
+#                        on  = checkpoint every pass (low VRAM)
+#                        auto = checkpoint only for latent_dim=64
 ##################################################
 
 set -e
@@ -62,7 +62,7 @@ resolve_train_device DEVICE
 cd "$PROJ_DIR"
 
 FINAL_DIR="${RESULT_DIR}/splatam/final"
-# SplaTAM может сохранить как params0.npz или params.npz в зависимости от конфига/версии
+# SplaTAM may save as params0.npz or params.npz depending on config/version
 if [ -f "${FINAL_DIR}/params0.npz" ]; then
     CHECKPOINT="${FINAL_DIR}/params0.npz"
 elif [ -f "${FINAL_DIR}/params.npz" ]; then
@@ -74,22 +74,22 @@ POSES="${RESULT_DIR}/keyframe_poses.json"
 FEATURES_DIR="${RESULT_DIR}/language_features"
 OUTPUT_DIR="${RESULT_DIR}/lang_field_${LEVEL}k${CODEBOOK_SIZE}_l${VQ_LAYER_NUM}"
 
-# ── Проверка зависимостей ─────────────────────────────────────────────────
+# ── Dependency checks ─────────────────────────────────────────────────────
 if [ ! -f "$CHECKPOINT" ]; then
-    echo "ERROR: Чекпойнт не найден: ни ${FINAL_DIR}/params0.npz, ни ${FINAL_DIR}/params.npz"
-    echo "       Сначала выполните 01_slam_exploration.sh"
+    echo "ERROR: Checkpoint not found: neither ${FINAL_DIR}/params0.npz nor ${FINAL_DIR}/params.npz"
+    echo "       Run 01_slam_exploration.sh first"
     exit 1
 fi
 
 if [ ! -f "$POSES" ]; then
-    echo "ERROR: keyframe_poses.json не найден: $POSES"
-    echo "       Сначала выполните 01_slam_exploration.sh"
+    echo "ERROR: keyframe_poses.json not found: $POSES"
+    echo "       Run 01_slam_exploration.sh first"
     exit 1
 fi
 
 if [ ! -d "$FEATURES_DIR" ]; then
-    echo "ERROR: RAW фичи не найдены: $FEATURES_DIR"
-    echo "       Сначала выполните 01_slam_exploration.sh"
+    echo "ERROR: RAW features not found: $FEATURES_DIR"
+    echo "       Run 01_slam_exploration.sh first"
     exit 1
 fi
 
@@ -127,5 +127,5 @@ python scripts/train_language_field.py \
     --lang_mode          langsplatv2
 
 echo ""
-echo "=== Language field обучено ==="
-echo "    Модель: ${OUTPUT_DIR}/lang_field.pt"
+echo "=== Language field trained ==="
+echo "    Model: ${OUTPUT_DIR}/lang_field.pt"

@@ -2,7 +2,7 @@
   "version": 1,
   "n_samples": 100,
   "info_semantic": "data/replica_v1/office_0/habitat/info_semantic.json",
-  "note": "Классы Replica: имена как в info_semantic (например chair, base-cabinet).",
+  "note": "Replica classes: names as in info_semantic (e.g. chair, base-cabinet).",
   "samples": [
     {
       "id": 0,

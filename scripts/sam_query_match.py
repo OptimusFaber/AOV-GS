@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-SAM: все автомаски на изображении → CLIP-эмбеддинг каждой маски → сравнение с текстовым запросом.
+SAM: all auto-masks on the image → CLIP embedding per mask → compare to text query.
 
-Использует те же кропы / нормализацию, что ``src/semantic/sam_clip_extractor.py`` (LangSplat-совместимо).
+Uses the same crops / normalization as ``src/semantic/sam_clip_extractor.py`` (LangSplat-compatible).
 
-Примеры
+Examples
 -------
-Только CLIP (512d):
+CLIP only (512d):
 
     python scripts/sam_query_match.py \\
         --image path/to/frame.png \\
         --query "a wooden table" \\
         --sam_ckpt ckpts/sam_vit_b_01ec64.pth
 
-С обученным автоэнкодером (латент, как в ``debug_query.py`` / LangSplat):
+With a trained autoencoder (latent, as in ``debug_query.py`` / LangSplat):
 
     python scripts/sam_query_match.py \\
         --image path/to/frame.png \\
@@ -21,10 +21,10 @@ SAM: все автомаски на изображении → CLIP-эмбедд
         --sam_ckpt ckpts/sam_vit_b_01ec64.pth \\
         --ae_ckpt ckpt/office0/best_ckpt.pth
 
-Аргумент ``--encoder`` — удобный алиас для ``--ae_ckpt`` (путь к .pth автоэнкодера).
+``--encoder`` is a convenience alias for ``--ae_ckpt`` (path to AE .pth).
 
-Результат: PNG рядом с кадром (``<image>_sam_query.png``) или ``--out``: все маски
-полупрозрачными цветами, выбранная по запросу — зелёным поверх.
+Output: PNG next to the frame (``<image>_sam_query.png``) or ``--out``: all masks
+in translucent colors, query-selected mask overlaid in green.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def embed_query(
     return q
 
 
-# Палитра без «чистого» зелёного — он зарезервирован под лучшую маску (как в query_language_field.py)
+# Palette without pure green — reserved for the best mask (as in query_language_field.py)
 SAM_PALETTE_BGR = [
     (0, 60, 255),
     (0, 165, 255),
@@ -185,7 +185,7 @@ RED_BGR = (0, 0, 255)
 
 
 def _mask_centroid_xy(mask_u8: np.ndarray) -> tuple[int, int]:
-    """Центр массы бинарной маски (x, y) в пикселях."""
+    """Binary mask center of mass (x, y) in pixels."""
     m = cv2.moments(mask_u8, binaryImage=True)
     if m["m00"] > 1e-6:
         return int(m["m10"] / m["m00"]), int(m["m01"] / m["m00"])
@@ -202,7 +202,7 @@ def _apply_mask_bgr(
     alpha: float = 0.4,
     draw_contour: bool = True,
 ) -> np.ndarray:
-    """BGR изображение + бинарная маска uint8, альфа-бленд и тонкий контур."""
+    """BGR image + binary uint8 mask, alpha-blend and thin contour."""
     a = (mask_u8 > 0).astype(np.float32)[:, :, None]
     c = np.full_like(img, np.array(color_bgr, dtype=np.uint8))
     out = (img.astype(np.float32) * (1.0 - alpha * a) + c.astype(np.float32) * (alpha * a)).clip(0, 255).astype(np.uint8)
@@ -221,7 +221,7 @@ def render_all_masks_and_best(
     alpha_best: float = 0.52,
 ) -> np.ndarray:
     """
-    Все SAM-маски — разными цветами; лучшая — зелёным; центр лучшей маски — красная точка.
+    All SAM masks in different colors; best in green; best-mask center as a red point.
     """
     out = bgr.copy()
     for i, m in enumerate(masks_all):
@@ -268,7 +268,7 @@ def main() -> None:
     p.add_argument(
         "--out",
         default=None,
-        help="Куда сохранить BGR: все маски цветом + лучшая зелёным (по умолчанию: <image>_sam_query.png)",
+        help="Where to save BGR: all masks colored + best in green (default: <image>_sam_query.png)",
     )
     args = p.parse_args()
 

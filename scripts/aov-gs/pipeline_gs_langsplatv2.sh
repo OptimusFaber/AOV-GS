@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 ##################################################
-# Pipeline 4 — CLIP + SAM + LangSplatV2 (codebook + sparse logits, без AE)
+# Pipeline 4 — CLIP + SAM + LangSplatV2 (codebook + sparse logits, no AE)
 #
-# Конфиг: ActiveOpenSem. Этапы: 01 → 02_validate_features_langsplatv2 (no-op) →
+# Config: ActiveOpenSem. Stages: 01 → 02_validate_features_langsplatv2 (no-op) →
 #         03_train_gaussian_lang_field_langsplatv2.
-# Нужен scikit-learn для инициализации codebook (KMeans).
+# scikit-learn is required for codebook init (KMeans).
 #
-# Использование:
+# Usage:
 #   bash scripts/aov-gs/pipeline_gs_langsplatv2.sh \\
 #       [SCENE] [SEED] [ENABLE_VIS] [DEBUG] \\
 #       [K] [SAM_LEVEL] [LANG_ITERS] [DEVICE] [L] [TOPK] [RENDER_CKPT] [TRAIN_DOWNSCALE]
 #
-# Пример:
+# Example:
 #   bash scripts/aov-gs/pipeline_gs_langsplatv2.sh office0 0 0 0 64 s 30000 cuda:0 1 4 auto 1.0
 ##################################################
 

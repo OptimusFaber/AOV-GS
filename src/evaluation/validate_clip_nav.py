@@ -1,24 +1,24 @@
 """
 Interactive CLIP open-vocabulary navigation validator.
 
-Использует только сохранённые CLIP-эмбеддинги (clip_index.pt), без ключевых кадров
-как изображений. Загружает index из result_dir/splatam/clip_index.pt (или --clip_index),
-CLIP нужен только для кодирования текстового запроса.
+Uses only saved CLIP embeddings (clip_index.pt), without keyframe
+images. Loads the index from result_dir/splatam/clip_index.pt (or --clip_index);
+CLIP is needed only to encode the text query.
 
-  - Ранжирует ключевые кадры по косинусному сходству с запросом.
-  - Карта: top-down X/Z, цвет точки = скор (зелёный → красный).
-  - В терминал печатается топ-K с оценками и позициями.
-  - Сетка картинок топ-K показывается только если есть keyframes/ (опционально).
+  - Ranks keyframes by cosine similarity to the query.
+  - Map: top-down X/Z, point color = score (green → red).
+  - Prints top-K with scores and positions to the terminal.
+  - Top-K image grid is shown only if keyframes/ exist (optional).
 
 Usage
 -----
-  # Предпочтительно: только эмбеддинги из clip_index.pt (без keyframe-изображений)
+  # Preferred: embeddings only from clip_index.pt (no keyframe images)
   python src/evaluation/validate_clip_nav.py --result_dir results/Replica/office0/ActiveOpenSem/run_bench_clip
 
-  # Явный путь к .pt
+  # Explicit path to .pt
   python src/evaluation/validate_clip_nav.py --clip_index results/.../splatam/clip_index.pt
 
-  # Без GUI
+  # Without GUI
   python src/evaluation/validate_clip_nav.py --result_dir ... --headless
 """
 
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Interactive CLIP navigation validator (uses saved embeddings, no keyframe images).")
     p.add_argument(
         "--result_dir", type=str, default=None,
-        help="Path to a completed ActiveSGM run. If set, clip_index is taken as result_dir/splatam/clip_index.pt unless --clip_index is given.",
+        help="Path to a completed AOV-GS (or ActiveSGM baseline) run. If set, clip_index is taken as result_dir/splatam/clip_index.pt unless --clip_index is given.",
     )
     p.add_argument(
         "--clip_index", type=str, default=None,

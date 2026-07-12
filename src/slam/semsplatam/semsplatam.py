@@ -177,7 +177,29 @@ class SemSplatam(SplatamOurs):
                                                                                        self.oneformer_model,
                                                                                        self.semantic_device,
                                                                                        num_classes=self.n_cls)
+        self._empty_cuda_cache(self.semantic_device)
         return class_ids_from_oneformer[0], class_logits_from_oneformer[0]  # (H,W), (H,W,150)
+
+    def _empty_cuda_cache(self, *devices) -> None:
+        """Release cached CUDA allocations (does not affect training — frees unused blocks)."""
+        if not torch.cuda.is_available():
+            return
+        if not devices:
+            devices = (self.device, self.semantic_device)
+        seen = set()
+        for dev in devices:
+            dev_str = str(dev)
+            if not dev_str.startswith("cuda") or dev_str in seen:
+                continue
+            seen.add(dev_str)
+            with torch.cuda.device(torch.device(dev_str)):
+                torch.cuda.empty_cache()
+
+    def _kf_tensor_gpu(self, t: torch.Tensor) -> torch.Tensor:
+        """Move keyframe tensor to SLAM device (keyframes stored on CPU)."""
+        if t.device == self.device:
+            return t
+        return t.to(self.device, non_blocking=True)
 
     def init_exploration_map(self, sim2slam: torch.tensor):
         """ initialize exploration map (grid)
@@ -537,11 +559,15 @@ class SemSplatam(SplatamOurs):
         Returns:
         '''
         if time_idx == 0:
-            # Используем данные из симулятора для инициализации
+            # Use simulator data for initialization
             self.init_camera_parameters_from_simulator(color, depth, c2w)
 
         seg_img = color.clone().to(self.semantic_device)
         _, seman = self.semantic_annotation(seg_img)
+        del seg_img
+        self._empty_cuda_cache(self.semantic_device)
+        if seman.device != self.device:
+            seman = seman.to(self.device, non_blocking=True)
         self.update_gs_map(
             time_idx, color, depth, seman, c2w,
             force_map_update, dont_add_kf, only_use_global_keyframe,
@@ -637,15 +663,17 @@ class SemSplatam(SplatamOurs):
         seman_igs = []
         for kf in self.keyframe_list[:-5]:
             c2w = torch.inverse(kf['est_w2c']) # c2w
+            kf_color = self._kf_tensor_gpu(kf['color'])
+            kf_depth = self._kf_tensor_gpu(kf['depth'])
             color, _, valid_mask, seen = self.render(c2w)
             # _, pred_logits = self.render_semantic(c2w,seen)
 
             ### compute REFINE I.G. ###
-            valid_depth_mask = kf['depth'] > 0.2 # FIXME: 0.2 is near culling range
-            color_ig = calc_psnr(color*valid_depth_mask, kf['color']*valid_depth_mask).mean()
+            valid_depth_mask = kf_depth > 0.2 # FIXME: 0.2 is near culling range
+            color_ig = calc_psnr(color*valid_depth_mask, kf_color*valid_depth_mask).mean()
             color_igs.append(color_ig)
 
-            seg_img = kf['color'].clone().permute(1, 2, 0).to(self.semantic_device)
+            seg_img = kf_color.clone().permute(1, 2, 0).to(self.semantic_device)
             pseudo_cls, pseudo_logits = self.semantic_annotation(seg_img)
             pseudo_logits = pseudo_logits.to(self.device)
             entropy = calc_shannon_entropy(pseudo_logits, dim=-1)
@@ -1025,14 +1053,12 @@ class SemSplatam(SplatamOurs):
                     else:
                         selected_rand_keyframe_idx = np.random.choice(self.global_keyframe_indices[:-1])
                         iter_time_idx = keyframe_list[selected_rand_keyframe_idx]['id']
-                        iter_color = keyframe_list[selected_rand_keyframe_idx]['color'] # C,H,W
-                        iter_depth = keyframe_list[selected_rand_keyframe_idx]['depth']
-                        if 'seman' in keyframe_list[selected_rand_keyframe_idx]:
-                            iter_seman = keyframe_list[selected_rand_keyframe_idx]['seman']
-                        else:
-                            iter_seg_img = iter_color.permute(1,2,0).clone().to(self.semantic_device)
-                            _, iter_seman = self.semantic_annotation(iter_seg_img)
-                            iter_seman = iter_seman.permute(2,0,1).to(self.device)
+                        iter_color = self._kf_tensor_gpu(keyframe_list[selected_rand_keyframe_idx]['color'])
+                        iter_depth = self._kf_tensor_gpu(keyframe_list[selected_rand_keyframe_idx]['depth'])
+                        iter_seg_img = iter_color.permute(1, 2, 0).clone().to(self.semantic_device)
+                        _, iter_seman = self.semantic_annotation(iter_seg_img)
+                        del iter_seg_img
+                        iter_seman = iter_seman.permute(2, 0, 1).to(self.device)
                         if 'crop_mask' in keyframe_list[selected_rand_keyframe_idx].keys():
                             iter_crop_mask = keyframe_list[selected_rand_keyframe_idx]['crop_mask']
                         else:
@@ -1051,14 +1077,12 @@ class SemSplatam(SplatamOurs):
                     else:
                         # Use Keyframe Data
                         iter_time_idx = keyframe_list[selected_rand_keyframe_idx]['id']
-                        iter_color = keyframe_list[selected_rand_keyframe_idx]['color']
-                        iter_depth = keyframe_list[selected_rand_keyframe_idx]['depth']
-                        if 'seman' in keyframe_list[selected_rand_keyframe_idx]:
-                            iter_seman = keyframe_list[selected_rand_keyframe_idx]['seman']
-                        else:
-                            iter_seg_img = iter_color.permute(1, 2, 0).clone().to(self.semantic_device)
-                            _, iter_seman = self.semantic_annotation(iter_seg_img)
-                            iter_seman = iter_seman.permute(2, 0, 1).to(self.device)
+                        iter_color = self._kf_tensor_gpu(keyframe_list[selected_rand_keyframe_idx]['color'])
+                        iter_depth = self._kf_tensor_gpu(keyframe_list[selected_rand_keyframe_idx]['depth'])
+                        iter_seg_img = iter_color.permute(1, 2, 0).clone().to(self.semantic_device)
+                        _, iter_seman = self.semantic_annotation(iter_seg_img)
+                        del iter_seg_img
+                        iter_seman = iter_seman.permute(2, 0, 1).to(self.device)
                         if 'crop_mask' in keyframe_list[selected_rand_keyframe_idx].keys():
                             iter_crop_mask = keyframe_list[selected_rand_keyframe_idx]['crop_mask']
                         else:
@@ -1111,6 +1135,7 @@ class SemSplatam(SplatamOurs):
                                             mapping=True, online_time_idx=time_idx)
                     else:
                         progress_bar.update(1)
+                del loss, losses
                 # Update the runtime numbers
                 iter_end_time = time.time()
                 self.mapping_iter_time_sum += iter_end_time - iter_start_time
@@ -1172,8 +1197,13 @@ class SemSplatam(SplatamOurs):
                     curr_w2c = torch.eye(4).cuda().float()
                     curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
                     curr_w2c[:3, 3] = curr_cam_tran
-                    # Initialize Keyframe Info
-                    curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 'depth': depth, 'seman': seman.detach()}
+                    # Keyframes: color/depth on CPU only — no seman cache (ActiveSGM re-runs OneFormer)
+                    curr_keyframe = {
+                        'id': time_idx,
+                        'est_w2c': curr_w2c,
+                        'color': color.detach().cpu(),
+                        'depth': depth.detach().cpu(),
+                    }
                     # Add to keyframe list
                     keyframe_list.append(curr_keyframe)
                     keyframe_time_indices.append(time_idx)
@@ -1214,7 +1244,7 @@ class SemSplatam(SplatamOurs):
         if config['use_wandb']:
             self.wandb_time_step += 1
 
-        # torch.cuda.empty_cache()
+        self._empty_cuda_cache(self.device, self.semantic_device)
         
         ##################################################
         ### update self variables

@@ -48,4 +48,11 @@ def oneformer_segmentation(image, oneformer_processor, oneformer_model, rank, nu
             logits = logits[...,:num_classes]
             normalized_logits = positive_normalize(logits, dim=-1, min=0.0)
             semantic_logits.append(normalized_logits)
-    return semantic_segmentation,semantic_logits
+            del resized_logits, logits, normalized_logits, semantic_map
+
+    del inputs, outputs, class_queries_logits, masks_queries_logits
+    del masks_classes, masks_probs, segmentation
+    if isinstance(rank, str) and rank.startswith("cuda"):
+        with torch.cuda.device(torch.device(rank)):
+            torch.cuda.empty_cache()
+    return semantic_segmentation, semantic_logits

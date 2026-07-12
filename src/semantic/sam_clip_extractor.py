@@ -1,24 +1,24 @@
 """
-SAM + CLIP feature extractor — формат совместим с LangSplat.
+SAM + CLIP feature extractor — format compatible with LangSplat.
 
-Для каждого RGB-кадра:
-  1. Запускает SAM для 4 уровней детализации (default, s, m, l)
-  2. Для каждой маски делает кроп → resize 224×224 → CLIP embed (512d)
-  3. Сохраняет два файла, идентичных формату LangSplat preprocess.py:
+For each RGB frame:
+  1. Runs SAM for 4 detail levels (default, s, m, l)
+  2. For each mask: crop → resize 224×224 → CLIP embed (512d)
+  3. Saves two files identical to the LangSplat preprocess.py format:
 
-     {frame_id:06d}_s.npy  — int32 (4, H, W)   карта сегментации
-                              значение = индекс маски в _f.npy
-                              (с кумулятивными смещениями по уровням)
-                              -1 = фон
+     {frame_id:06d}_s.npy  — int32 (4, H, W)   segmentation map
+                              value = mask index in _f.npy
+                              (with cumulative offsets across levels)
+                              -1 = background
 
      {frame_id:06d}_f.npy  — float16 (N_total, 512)
-                              CLIP-эмбеддинги всех масок всех уровней подряд
+                              CLIP embeddings of all masks of all levels concatenated
 
-Эти файлы используются напрямую как входные данные для:
-  - train_language_autoencoder.py  (читает _f.npy)
-  - train_language_field.py / langsplatam.py  (читает _s.npy + _f.npy → пиксельную карту)
+These files are used directly as input for:
+  - train_language_autoencoder.py  (reads _f.npy)
+  - train_language_field.py / langsplatam.py  (reads _s.npy + _f.npy → pixel feature map)
 
-Запуск в фоновом треде, кадры добавляются через submit().
+Runs in a background thread; frames are added via submit().
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
-# Порядок уровней — как в LangSplat
+# Level order — same as LangSplat
 _LEVELS = ['default', 's', 'm', 'l']
 
 
@@ -45,7 +45,7 @@ _LEVELS = ['default', 's', 'm', 'l']
 # ---------------------------------------------------------------------------
 
 def _to_uint8_numpy(color: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
-    """[H,W,3] uint8 или float tensor → uint8 numpy BGR (для SAM/cv2)."""
+    """[H,W,3] uint8 or float tensor → uint8 numpy BGR (for SAM/cv2)."""
     if isinstance(color, torch.Tensor):
         arr = color.detach().cpu()
         if arr.dtype != torch.uint8:
@@ -59,12 +59,12 @@ def _to_uint8_numpy(color: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
 
 
 def _habitat_rgb_for_sam(image_rgb: np.ndarray) -> np.ndarray:
-    """RGB уже в порядке строк OpenCV (симулятор: ``pinhole_vertical_flip`` в ``habitat.py``)."""
+    """RGB already in OpenCV row order (simulator: ``pinhole_vertical_flip`` in ``habitat.py``)."""
     return np.ascontiguousarray(image_rgb)
 
 
 def _sam_masks_to_habitat(masks: list) -> list:
-    """Маски SAM в той же индексации строк, что и тензоры SLAM / датасет."""
+    """SAM masks in the same row indexing as SLAM / dataset tensors."""
     out: list = []
     for m in masks:
         mc = dict(m)
@@ -77,10 +77,10 @@ def _sam_masks_to_habitat(masks: list) -> list:
 
 def get_seg_img(mask: dict, image: np.ndarray) -> np.ndarray:
     """
-    Кроп изображения по bbox маски.
+    Crop the image by the mask bbox.
 
-    Важно: оставляем фон внутри bbox (не зануляем вне-маску), т.к. так CLIP
-    видит контекст объекта. Паддинг bbox применяется отдельно.
+    Important: keep background inside the bbox (do not zero outside-mask), so CLIP
+    sees object context. Bbox padding is applied separately.
     """
     x, y, w, h = np.int32(mask["bbox"])
     return image[y:y + h, x:x + w, ...]
@@ -107,7 +107,7 @@ def _tight_crop_with_padding(mask: dict, image: np.ndarray, pad_px: int) -> np.n
 
 
 def pad_img(img: np.ndarray) -> np.ndarray:
-    """Дополнить изображение до квадрата (legacy helper)."""
+    """Pad the image to a square (legacy helper)."""
     h, w, _ = img.shape
     l = max(w, h)
     pad = np.zeros((l, l, 3), dtype=np.uint8)
@@ -271,22 +271,22 @@ def _suppress_interclass_corrclip_style(
 
 class SAMCLIPExtractor:
     """
-    Фоновый поток для извлечения SAM+CLIP фич в формате LangSplat.
+    Background thread for extracting SAM+CLIP features in LangSplat format.
 
     Parameters
     ----------
     save_dir : str | Path
-        Куда сохранять {frame_id:06d}_s.npy и {frame_id:06d}_f.npy.
+        Where to save {frame_id:06d}_s.npy and {frame_id:06d}_f.npy.
     sam_ckpt_path : str
-        Путь к чекпоинту SAM ViT-H.
+        Path to the SAM ViT-H checkpoint.
     clip_model : str
-        Имя модели open_clip, напр. "ViT-B-16".
+        open_clip model name, e.g. "ViT-B-16".
     clip_pretrained : str
-        Веса open_clip, напр. "laion2b_s34b_b88k".
+        open_clip weights, e.g. "laion2b_s34b_b88k".
     device : str
-        CUDA-устройство для SAM и CLIP.
+        CUDA device for SAM and CLIP.
     queue_size : int
-        Максимум кадров в очереди.
+        Maximum frames in the queue.
     """
 
     def __init__(
@@ -308,7 +308,7 @@ class SAMCLIPExtractor:
         corrclip_interclass_suppress_alpha: float = 0.15,
         corrclip_interclass_sim_thresh: float = 0.78,
         corrclip_interclass_sigma_px: float = 120.0,
-        # Параметры ниже оставлены для обратной совместимости, не используются
+        # Parameters below kept for backward compatibility; unused
         levels: tuple = ("default", "s", "m", "l"),
         save_fp16: bool = True,
     ) -> None:
@@ -358,13 +358,13 @@ class SAMCLIPExtractor:
         logger.info("SAMCLIPExtractor started on %s", self.device)
 
     def submit(self, frame_id: int, color: Union[np.ndarray, torch.Tensor]) -> None:
-        """Добавить кадр в очередь обработки.
+        """Enqueue a frame for processing.
 
-        GPU-тензор немедленно конвертируется в CPU numpy, чтобы очередь не
-        удерживала ссылки на GPU-память.
+        GPU tensors are converted to CPU numpy immediately so the queue does not
+        hold references to GPU memory.
 
-        Используется bounded blocking put (submit_timeout_s), чтобы не терять
-        кадры бесшумно при кратковременных всплесках нагрузки.
+        Uses bounded blocking put (submit_timeout_s) to avoid silently dropping
+        frames during short load spikes.
         """
         if not self._running or not self._accepting_submissions:
             return
@@ -384,17 +384,17 @@ class SAMCLIPExtractor:
             )
 
     def flush(self) -> None:
-        """Дождаться обработки всех кадров в очереди."""
+        """Wait until all queued frames are processed."""
         self._queue.join()
 
     def stop(self, wait: bool = True, drain: bool = True, join_timeout_s: float = 120.0) -> None:
-        """Завершить фоновый поток.
+        """Shut down the background thread.
 
         Args:
-            wait: ждать ли завершения воркер-потока.
-            drain: обработать ли все уже поставленные кадры перед остановкой.
-                   False = быстрый stop: кадры в очереди будут отброшены.
-            join_timeout_s: таймаут ожидания завершения потока.
+            wait: whether to wait for the worker thread to finish.
+            drain: whether to process all already-queued frames before stopping.
+                   False = fast stop: queued frames will be discarded.
+            join_timeout_s: timeout waiting for the thread to finish.
         """
         self._accepting_submissions = False
 
@@ -453,7 +453,7 @@ class SAMCLIPExtractor:
         return fallback
 
     def _load_models(self) -> None:
-        """Загрузить SAM и CLIP (один раз, в воркер-треде)."""
+        """Load SAM and CLIP (once, in the worker thread)."""
         try:
             from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
         except ImportError as exc:
@@ -462,7 +462,7 @@ class SAMCLIPExtractor:
                 "pip install git+https://github.com/facebookresearch/segment-anything.git"
             ) from exc
 
-        # Определяем тип модели по имени файла чекпоинта
+        # Infer model type from checkpoint filename
         ckpt_name = Path(self.sam_ckpt_path).name
         if "vit_h" in ckpt_name:
             model_type = "vit_h"
@@ -473,7 +473,7 @@ class SAMCLIPExtractor:
         logger.info("SAM model type: %s (from %s)", model_type, ckpt_name)
         sam = sam_model_registry[model_type](checkpoint=self.sam_ckpt_path)
         sam.to(device=self.device)
-        # Единственный генератор — как в LangSplat preprocess.py
+        # Single generator — as in LangSplat preprocess.py
         self._mask_generator = SamAutomaticMaskGenerator(
             model=sam,
             points_per_side=32,
@@ -500,7 +500,7 @@ class SAMCLIPExtractor:
         model.eval()
         model = model.to(self.device)
         self._clip_model = model
-        # Препроцессинг как в LangSplat (resize 224 + normalize)
+        # Preprocessing as in LangSplat (resize 224 + normalize)
         self._clip_process = torchvision.transforms.Compose([
             torchvision.transforms.Resize((224, 224)),
             torchvision.transforms.Normalize(
@@ -512,12 +512,12 @@ class SAMCLIPExtractor:
 
     def _masks_at_level(self, masks_all: list, level: str) -> list:
         """
-        LangSplat разбивает маски на 4 уровня по размеру area.
-        Воспроизводим аналогичное разбиение:
-          default — все маски
-          s — маски area < 32^2
-          m — маски area в [32^2, 96^2)
-          l — маски area >= 96^2
+        LangSplat splits masks into 4 levels by area size.
+        Reproduce the same split:
+          default — all masks
+          s — masks with area < 32^2
+          m — masks with area in [32^2, 96^2)
+          l — masks with area >= 96^2
         """
         if level == 'default':
             return masks_all
@@ -528,11 +528,11 @@ class SAMCLIPExtractor:
     @torch.no_grad()
     def _embed_masks(self, image_rgb: np.ndarray, masks: list) -> np.ndarray:
         """
-        Для каждой маски: кроп → pad → resize 224×224 → CLIP encode.
-        Возвращает (N, 512) float16 numpy, L2-нормализован.
+        For each mask: crop → pad → resize 224×224 → CLIP encode.
+        Returns (N, 512) float16 numpy, L2-normalized.
 
-        Обработка ведётся батчами по clip_batch_size масок, чтобы не создавать
-        один огромный тензор [N, 3, 224, 224] в GPU-памяти при большом N.
+        Processing runs in batches of clip_batch_size masks to avoid creating
+        one huge [N, 3, 224, 224] tensor in GPU memory when N is large.
         """
         if not masks:
             return np.zeros((0, 512), dtype=np.float16)
@@ -561,7 +561,7 @@ class SAMCLIPExtractor:
         return result
 
     def _process_frame(self, frame_id: int, color: Union[np.ndarray, torch.Tensor]) -> None:
-        """Основная функция: SAM → CLIP → сохранение в формате LangSplat."""
+        """Main function: SAM → CLIP → save in LangSplat format."""
         s_path = self.save_dir / f"{frame_id:06d}_s.npy"
         f_path = self.save_dir / f"{frame_id:06d}_f.npy"
         if s_path.exists() and f_path.exists():
@@ -575,13 +575,13 @@ class SAMCLIPExtractor:
         image_bgr_sam = cv2.cvtColor(image_rgb_sam, cv2.COLOR_RGB2BGR)
         masks_all_sam = self._mask_generator.generate(image_bgr_sam)
 
-        # Освобождаем GPU-кэш после SAM, чтобы SLAM в главном треде получил
-        # как можно больше свободной памяти до следующего шага.
+        # Free GPU cache after SAM so SLAM on the main thread gets
+        # as much free memory as possible before the next step.
         if self.device.startswith("cuda"):
             torch.cuda.empty_cache()
 
-        # Ограничиваем общее число масок: оставляем наибольшие по площади,
-        # чтобы контролировать пиковый размер CLIP-батча.
+        # Cap total mask count: keep the largest by area,
+        # to control peak CLIP-batch size.
         if len(masks_all_sam) > self.max_masks_per_frame:
             masks_all_sam = sorted(masks_all_sam, key=lambda m: m['area'], reverse=True)[
                 :self.max_masks_per_frame
@@ -589,7 +589,7 @@ class SAMCLIPExtractor:
 
         masks_all = _sam_masks_to_habitat(masks_all_sam)
 
-        # Debug: overlay в той же ориентации, что и SAM (читаемый segmentframes/)
+        # Debug: overlay in the same orientation as SAM (readable segmentframes/)
         if self.debug_dir is not None and masks_all_sam:
             rng = np.random.default_rng(seed=42)
             overlay = image_rgb_sam.copy()
@@ -602,8 +602,8 @@ class SAMCLIPExtractor:
             cv2.imwrite(str(self.debug_dir / f"frame_{frame_id:06d}.jpg"), out_bgr)
             logger.debug("Debug mask saved for frame %d (%d masks)", frame_id, len(masks_all_sam))
 
-        seg_maps = []   # будет (4, H, W) int32
-        all_embeds = [] # будет (N_total, 512) float16
+        seg_maps = []   # will be (4, H, W) int32
+        all_embeds = [] # will be (N_total, 512) float16
         cumsum = 0
 
         for level in _LEVELS:
@@ -636,7 +636,7 @@ class SAMCLIPExtractor:
                 all_embeds.append(embs)
             cumsum += len(masks_lvl)
 
-        # Освобождаем кэш после всех CLIP-проходов для этого кадра
+        # Free cache after all CLIP passes for this frame
         if self.device.startswith("cuda"):
             torch.cuda.empty_cache()
 
@@ -677,7 +677,7 @@ class SAMCLIPExtractor:
 
 
 # ---------------------------------------------------------------------------
-# Утилита загрузки — аналог get_language_feature() из LangSplat/cameras.py
+# Load utility — analogue of get_language_feature() from LangSplat/cameras.py
 # ---------------------------------------------------------------------------
 
 def load_frame_features(
@@ -686,20 +686,20 @@ def load_frame_features(
     feature_level: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Загрузить (_s.npy, _f.npy) и вернуть пиксельную карту фич для одного уровня.
+    Load (_s.npy, _f.npy) and return a pixel feature map for one level.
 
-    Аналог Camera.get_language_feature() из LangSplat/scene/cameras.py.
+    Analogue of Camera.get_language_feature() from LangSplat/scene/cameras.py.
 
     Parameters
     ----------
-    save_dir : путь к language_features/ или language_features_dim3/
-    frame_id : числовой ID кадра
+    save_dir : path to language_features/ or language_features_dim3/
+    frame_id : numeric frame ID
     feature_level : 0=default, 1=s, 2=m, 3=l
 
     Returns
     -------
-    point_feature : float32 (D, H, W)  — пиксельная карта фич
-    mask          : bool   (1, H, W)   — маска валидных пикселей
+    point_feature : float32 (D, H, W)  — pixel feature map
+    mask          : bool   (1, H, W)   — valid-pixel mask
     """
     save_dir = Path(save_dir)
     seg_map = np.load(str(save_dir / f"{frame_id:06d}_s.npy"))    # (4, H, W) int32

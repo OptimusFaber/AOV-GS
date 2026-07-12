@@ -2,7 +2,7 @@
 ##################################################
 # Step 3: Train LangSplatV2 language field.
 #
-# Читает params0.npz + keyframe_poses.json + language_features/ (512-D RAW).
+# Reads params0.npz + keyframe_poses.json + language_features/ (512-D RAW).
 ##################################################
 
 set -e
@@ -47,16 +47,16 @@ FEATURES_DIR="${RESULT_DIR}/language_features"
 OUTPUT_DIR="${RESULT_DIR}/lang_field_${LEVEL}k${CODEBOOK_SIZE}_l${VQ_LAYER_NUM}"
 
 if [ ! -f "$CHECKPOINT" ]; then
-    echo "ERROR: Чекпойнт не найден: ${FINAL_DIR}/params*.npz"
+    echo "ERROR: Checkpoint not found: ${FINAL_DIR}/params*.npz"
     exit 1
 fi
 if [ ! -f "$POSES" ]; then
-    echo "ERROR: keyframe_poses.json не найден: $POSES"
+    echo "ERROR: keyframe_poses.json not found: $POSES"
     exit 1
 fi
 if [ ! -d "$FEATURES_DIR" ]; then
-    echo "ERROR: RAW фичи не найдены: $FEATURES_DIR"
-    echo "       Нужна language_features/ после 01_slam_exploration (не language_features_dim64)"
+    echo "ERROR: RAW features not found: $FEATURES_DIR"
+    echo "       Need language_features/ after 01_slam_exploration (not language_features_dim64)"
     exit 1
 fi
 

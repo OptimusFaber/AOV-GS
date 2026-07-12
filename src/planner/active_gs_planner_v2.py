@@ -70,6 +70,21 @@ def remove_consecutive_duplicates(array_list: List[np.ndarray]) -> List[np.ndarr
     return result
 
 
+def _kf_color_depth_on_device(kf: dict, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Move keyframe color/depth to ``device`` (keyframes may be stored on CPU)."""
+    color = kf["color"]
+    depth = kf["depth"]
+    if not isinstance(color, torch.Tensor):
+        color = torch.as_tensor(color, device=device)
+    elif color.device != device:
+        color = color.to(device, non_blocking=True)
+    if not isinstance(depth, torch.Tensor):
+        depth = torch.as_tensor(depth, device=device)
+    elif depth.device != device:
+        depth = depth.to(device, non_blocking=True)
+    return color, depth
+
+
 class ActiveGSPlannerv2(NarutoPlanner):
     def __init__(self, 
                  main_cfg    : mmengine.Config,
@@ -1349,10 +1364,11 @@ class ActiveGSPlannerv2(NarutoPlanner):
                 cls_ids, logits = gs_slam.render_semantic(cand_pose, seen)
 
                 ### compute REFINE I.G. ###
-                valid_depth_mask = cand_data[i]['depth'] > 0
-                color_ig = calc_psnr(color*valid_depth_mask, cand_data[i]['color']*valid_depth_mask).mean()
+                kf_color, kf_depth = _kf_color_depth_on_device(cand_data[i], color.device)
+                valid_depth_mask = kf_depth > 0
+                color_ig = calc_psnr(color * valid_depth_mask, kf_color * valid_depth_mask).mean()
                 color_igs.append(color_ig)
-                depth_ig = (torch.abs(depth*valid_depth_mask - cand_data[i]['depth']*valid_depth_mask)/(cand_data[i]['depth']+1e-8)).sum() / valid_depth_mask.sum() 
+                depth_ig = (torch.abs(depth * valid_depth_mask - kf_depth * valid_depth_mask) / (kf_depth + 1e-8)).sum() / valid_depth_mask.sum() 
                 depth_igs.append(depth_ig)
 
                 # TODO: add semantic ig
@@ -1425,8 +1441,9 @@ class ActiveGSPlannerv2(NarutoPlanner):
                     _, img_h, img_w = color.shape
 
                     ### compute REFINE I.G. ###
-                    valid_depth_mask = cand_data[i]['depth'] > 0
-                    color_ig = calc_psnr(color*valid_depth_mask, cand_data[i]['color']*valid_depth_mask).mean()
+                    kf_color, kf_depth = _kf_color_depth_on_device(cand_data[i], color.device)
+                    valid_depth_mask = kf_depth > 0
+                    color_ig = calc_psnr(color * valid_depth_mask, kf_color * valid_depth_mask).mean()
                     color_igs.append(color_ig)
 
                     topk_probs, _ = torch.topk(pred_logits, k=min(int(getattr(gs_slam, "topk", 16)), pred_logits.shape[0]), dim=0)

@@ -26,7 +26,7 @@ from src.utils.general_utils import InfoPrinter
 
 SEMANTIC_PICK_BANNER = """
 #######################
-#      Выбор семантики          #
+#      Semantic selection        #
 #######################
 """
 

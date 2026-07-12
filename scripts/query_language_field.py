@@ -6,13 +6,13 @@ Pipeline
 1. Score every Gaussian: cosine_sim(lang_feat, CLIP_text_query_encoded_via_AE).
 2. Take top-percentile Gaussians as candidates.
 3. DBSCAN-cluster their 3D positions → find semantic clusters (optional ``--no_clusters``).
-4. Rank clusters by mean/total/max score (``--cluster_rank_by``; default **mean** — не только «самый большой» кластер).
+4. Rank clusters by mean/total/max score (``--cluster_rank_by``; default **mean** — not only the “largest” cluster).
 5. Pick a view from **either** ``--poses`` (JSON keyframes) **or** auto-sampled poses
    inside the Gaussian hull (``--poses`` omitted): **checkpoint is never used** for
    trajectory; with ``--pose_select relevancy`` the pose is scored by the relevancy map
-   (default ``--pose_score_mode global_topmean``, не только патч у проекции центроида).
-6. Render RGB + relevancy heatmap + overlay; ``semantic.png`` маска по умолчанию как в
-   LangSplatV2 (порог на ``sim_raw``, без SAM / без ``*_s.npy``); старый режим SAM: ``--semantic_mask_mode sam``.
+   (default ``--pose_score_mode global_topmean``, not only a patch at the centroid projection).
+6. Render RGB + relevancy heatmap + overlay; ``semantic.png`` mask by default as in
+   LangSplatV2 (threshold on ``sim_raw``, no SAM / no ``*_s.npy``); legacy SAM mode: ``--semantic_mask_mode sam``.
 7. Save 3D scatter map showing all clusters.
 
 Usage
@@ -24,8 +24,8 @@ python scripts/query_language_field.py \\
   --ae_ckpt     ckpt/room0/best_ckpt.pth \\
   --out         results/lang_field/query_sofa
 
-  # Позы: не указывайте --poses → скрипт сам сэмплирует камеры внутри сцены.
-  # Или: --poses results/keyframe_poses.json (как раньше).
+  # Poses: omit --poses → the script samples cameras inside the scene.
+  # Or: --poses results/keyframe_poses.json (as before).
 """
 
 from __future__ import annotations
@@ -157,9 +157,9 @@ def rank_clusters_by(clusters: list[dict], rank_by: str) -> None:
     """
     Re-order clusters after DBSCAN (or single-cluster mode).
 
-    ``total`` — сумма cos×opacity по гауссианам (крупные объекты побеждают).
-    ``mean`` — средний скор (лучше для «какой объект лучше всего подходит»).
-    ``max`` — макс. скор в кластере (пик уверенности).
+    ``total`` — sum of cos×opacity over Gaussians (large objects win).
+    ``mean`` — mean score (better for “which object fits best”).
+    ``max`` — max score in the cluster (confidence peak).
     """
     if rank_by == 'mean':
         clusters.sort(key=lambda c: -(c['total_score'] / max(1, c['size'])))
@@ -758,8 +758,8 @@ def _render_raw_cosine_map(
     softmax_inv_temp: float = 10.0,
 ) -> np.ndarray:
     """
-    Карта релевантности запроса по пикселям: для ``softmax_pair`` с негативами —
-    P(query) после blur логитов и softmax; иначе скор из ``_apply_discriminative_score``.
+    Per-pixel query relevancy map: for ``softmax_pair`` with negatives —
+    P(query) after logit blur and softmax; otherwise the score from ``_apply_discriminative_score``.
     """
     batch = 4096
     q = clip_query.to(device).to(torch.float32)
@@ -854,7 +854,7 @@ def _multiclass_discriminative_logits(
     negative_weight: float,
 ) -> torch.Tensor:
     """
-    Собрать логиты для softmax по классам: [запрос, neg_1, …, neg_K].
+    Build class logits for softmax: [query, neg_1, …, neg_K].
     ``feat``: [B, 512], ``clip_query``: [512], ``negative_clip_queries``: [K, 512].
     """
     q = clip_query.to(device=feat.device, dtype=torch.float32)
@@ -866,7 +866,7 @@ def _multiclass_discriminative_logits(
 
 
 def _blur_logits_hw(logits_hw: np.ndarray, blur_sigma: float) -> np.ndarray:
-    """Gaussian blur по каждому каналу карты логитов [H, W, C] (до softmax)."""
+    """Gaussian blur on each channel of the logit map [H, W, C] (before softmax)."""
     if blur_sigma <= 0.0:
         return logits_hw
     ksize = int(blur_sigma * 6) | 1
@@ -883,7 +883,7 @@ def _softmax_probs_from_logits_hw(
     inv_temp: float,
     device: torch.device,
 ) -> np.ndarray:
-    """softmax по последней оси; ``logits_hw`` float32 [H, W, C]."""
+    """softmax over the last axis; ``logits_hw`` float32 [H, W, C]."""
     C = logits_hw.shape[-1]
     tt = torch.from_numpy(logits_hw.astype(np.float32)).to(device)
     probs = F.softmax(tt.reshape(-1, C) * float(inv_temp), dim=-1)
@@ -911,13 +911,13 @@ def _apply_discriminative_score(
     """
     Negative-aware CLIP cosine scoring.
 
-    - ``softmax_pair`` (default): per-pixel softmax по классам
-      ``[cos+, w·cos_neg1, …, w·cos_negK]`` → вероятности суммы 1;
-      возвращается P(запрос). Каждый негатив — отдельный класс (поле
-      ``negative_mode`` для этого режима не используется).
+    - ``softmax_pair`` (default): per-pixel softmax over classes
+      ``[cos+, w·cos_neg1, …, w·cos_negK]`` → probabilities sum to 1;
+      returns P(query). Each negative is a separate class (the
+      ``negative_mode`` field is unused in this mode).
 
     - ``subtract``: legacy score = cos+ − w·aggregated_negative; optional ``relu_floor``.
-      Здесь ``negative_mode`` (max/mean) задаёт агрегацию нескольких негативов.
+      Here ``negative_mode`` (max/mean) sets aggregation of multiple negatives.
     """
     if negative_clip_queries is None or negative_clip_queries.numel() == 0:
         return pos_score
@@ -965,11 +965,11 @@ def _score_sim_map(
     top_frac: float,
 ) -> float:
     """
-    Скаляр для ранжирования позы по карте сырого cos (после blur как в рендере).
+    Scalar for ranking a pose from the raw cos map (after blur as in the render).
 
-    ``centroid_patch`` — среднее в окне у проекции 3D-центроида (старое поведение).
-    ``global_mean`` — среднее по всему кадру.
-    ``global_topmean`` — среднее по верхнему ``top_frac`` пикселей (устойчиво к фону).
+    ``centroid_patch`` — mean in a window at the 3D-centroid projection (legacy behavior).
+    ``global_mean`` — mean over the whole frame.
+    ``global_topmean`` — mean over the top ``top_frac`` pixels (robust to background).
     """
     if score_mode == 'centroid_patch':
         return _patch_mean(sim_np, xi, yi, patch_radius)
@@ -990,7 +990,7 @@ def _centroid_in_front_only(
     device: torch.device,
     z_min: float,
 ) -> tuple[bool, float, int, int]:
-    """Центроид перед камерой (z>=z_min); xi,yi — проекция (могут быть вне кадра)."""
+    """Centroid in front of the camera (z>=z_min); xi,yi — projection (may be off-frame)."""
     pt = torch.tensor([*centroid, 1.0], dtype=torch.float32, device=device)
     cam = w2c @ pt
     z = cam[2].item()
@@ -1039,16 +1039,16 @@ def best_pose_by_query_relevancy(
     min_gravity: float | None = 0.12,
 ) -> tuple[int | None, torch.Tensor | None]:
     """
-    Среди поз, где центроид кластера перед камерой (и для ``centroid_patch`` ещё и
-    внутри поля зрения с отступом), выбираем кадр с максимальным скором по карте
-    ``cos(decoded latent, CLIP text)`` (см. ``score_mode``).
+    Among poses where the cluster centroid is in front of the camera (and for ``centroid_patch`` also
+    inside the FOV with a margin), pick the frame with the maximum score on the
+    ``cos(decoded latent, CLIP text)`` map (see ``score_mode``).
 
-    По умолчанию ``global_topmean``: сравниваем верхнюю долю пикселей кадра — так
-    выбор устойчивее, чем одно окно у проекции центроида, если 3D-центроид промахивается.
+    Default ``global_topmean``: compare the top fraction of frame pixels — this makes
+    selection more robust than a single window at the centroid projection when the 3D centroid misses.
 
-    ``exclude_fids``: не переиспользовать эти frame_id (другие кластеры).
+    ``exclude_fids``: do not reuse these frame_ids (other clusters).
 
-    ``min_gravity``: отсекаем перевёрнутые камеры (Y-up); при отсутствии кандидатов ослабляем.
+    ``min_gravity``: filter out upside-down cameras (Y-up); relax if no candidates remain.
     """
     if allowed_pose_ids is not None and len(allowed_pose_ids) == 0:
         return None, None
@@ -1183,9 +1183,9 @@ def _normalize_relevancy_map(
     """
     Map raw cosine similarities to [0, 1] for visualization.
 
-    ``cosine01``: после blur клип в [-1,1], линейно в [0,1] как (cos+1)/2; если cos почти
-    постоянен по кадру, контраст на JET почти нулевой (для LangSplatV2 обычно лучше percentile).
-    ``percentile``: stretch (p_low … p_high); меньше шума на фоне.
+    ``cosine01``: after blur, clip to [-1,1], map linearly to [0,1] as (cos+1)/2; if cos is nearly
+    constant across the frame, JET contrast is near zero (for LangSplatV2, percentile is usually better).
+    ``percentile``: stretch (p_low … p_high); less background noise.
     """
     if mode == 'cosine01':
         x = np.clip(sim_np.astype(np.float64), -1.0, 1.0)
@@ -1224,16 +1224,16 @@ def w2c_gaussian_frame_from_replica_c2w(
     c2w_train0_replica: np.ndarray,
 ) -> np.ndarray:
     """
-    Поза replica_sim → ``w2c`` в **системе координат Gaussian checkpoint** SplaTAM/LangSplatam:
+    replica_sim pose → ``w2c`` in the SplaTAM/LangSplatam **Gaussian checkpoint coordinate frame**:
     ``inv(c2w_nvs) @ c2w_train0``.
 
-    ``LangSplatam.render_lang`` / ``render_rgb`` ожидают именно такую **опорную** связку
-    (см. ``scripts/render_query_from_pose.py``, ``scripts/validate_lang_field_traj.py``).
-    Если чекпойнт обучался с тем же NVS ``traj.txt``, без Replica обычно достаточно
-    ``inv(c2w_i) @ c2w_nvs[0]`` (первая строка вашего траекта).
+    ``LangSplatam.render_lang`` / ``render_rgb`` expect exactly this **reference** pairing
+    (see ``scripts/render_query_from_pose.py``, ``scripts/validate_lang_field_traj.py``).
+    If the checkpoint was trained with the same NVS ``traj.txt``, without Replica it is usually enough to use
+    ``inv(c2w_i) @ c2w_nvs[0]`` (first row of your traj).
 
-    Обе матрицы — camera-to-world в одной глобальной Replica (RDF); ``c2w_train0`` — первая
-    строка ``data/Replica/<scene>/traj.txt``.
+    Both matrices are camera-to-world in the same global Replica (RDF); ``c2w_train0`` is the first
+    row of ``data/Replica/<scene>/traj.txt``.
     """
     a = np.asarray(c2w_replica, dtype=np.float64).reshape(4, 4)
     b = np.asarray(c2w_train0_replica, dtype=np.float64).reshape(4, 4)
@@ -1248,7 +1248,7 @@ def _fmt_viz_score(v: float) -> str:
 
 
 def _safe_filename_fragment(text: str, max_len: int = 48) -> str:
-    """Фрагмент имени файла из произвольной строки (класс / текст запроса)."""
+    """Filename fragment from an arbitrary string (class / query text)."""
     parts: list[str] = []
     for ch in text.strip():
         if ch.isalnum():
@@ -1273,7 +1273,7 @@ def overlay_bgr_from_rgb_and_probability_map(
     norm_caption: str,
     score_title: str = 'P',
 ) -> np.ndarray:
-    """RGB + JET(probability) + шкала; ``prob_hw`` в диапазоне [0, 1] (канал softmax)."""
+    """RGB + JET(probability) + scale bar; ``prob_hw`` in [0, 1] (softmax channel)."""
     pr = np.clip(prob_hw.astype(np.float32), 0.0, 1.0)
     jet = cv2.applyColorMap((pr * 255).astype(np.uint8), cv2.COLORMAP_JET)
     blended = cv2.addWeighted(rgb_bgr, 0.55, jet, 0.45, 0)
@@ -1385,22 +1385,22 @@ def render_relevancy_map(
     with CLIP text embedding.  Comparing in 512d (not latent) is more
     discriminative because the AE may distort relative distances.
 
-    Для ``negative_score_mode=softmax_pair`` и непустых ``negative_clip_queries``:
-    по пикселям softmax по классам ``[cos+, w·cos_neg1, …]`` (после Gaussian blur
-    логитов), сумма вероятностей = 1; основная карта и ``sim_raw`` — P(запрос) ∈ [0,1].
-    Пятый элемент возврата — ``per_class_probs`` [H,W,1+K] с P для запроса и каждого
-    негатива; иначе ``None``.
+    For ``negative_score_mode=softmax_pair`` and non-empty ``negative_clip_queries``:
+    per-pixel softmax over classes ``[cos+, w·cos_neg1, …]`` (after Gaussian blur of
+    logits); probabilities sum to 1; main map and ``sim_raw`` are P(query) ∈ [0,1].
+    Fifth return element is ``per_class_probs`` [H,W,1+K] with P for the query and each
+    negative; otherwise ``None``.
 
-    В остальных случаях ``blur_sigma`` сглаживает уже итоговую скор-карту; нормализация
-    для JET — ``heatmap_norm`` (percentile / minmax).
+    Otherwise ``blur_sigma`` smooths the final score map; normalization
+    for JET uses ``heatmap_norm`` (percentile / minmax).
 
     Returns
     -------
-    jet : BGR uint8 heatmap для запроса
-    norm : float32 [H,W] в [0,1] для отображения запроса
-    sim_raw : float32 [H,W] — сырая карта после blur (для SAM); при softmax multi-class это P(query)
-    (lo, hi) : шкала colorbar (для softmax с негативами обычно 0…1)
-    per_class_probs : [H,W,C] или None
+    jet : BGR uint8 heatmap for the query
+    norm : float32 [H,W] in [0,1] for displaying the query
+    sim_raw : float32 [H,W] — raw map after blur (for SAM); for softmax multi-class this is P(query)
+    (lo, hi) : colorbar scale (for softmax with negatives usually 0…1)
+    per_class_probs : [H,W,C] or None
     """
     batch = 4096
     dev = device if device is not None else w2c.device
@@ -1527,12 +1527,12 @@ def render_relevancy_dual_heatmaps(
     np.ndarray | None,
 ]:
     """
-    Один проход рендера поля → две JET-карты запроса:
+    One language-field render pass → two JET query maps:
 
-    - **scale01**: для softmax multi-class — P(query) ∈ [0,1]; иначе ``(clip(cos,±1)+1)/2`` ∈ [0,1].
-    - **percentile**: классическая нормализация по перцентилям ``heatmap_p_low/high``.
+    - **scale01**: for softmax multi-class — P(query) ∈ [0,1]; else ``(clip(cos,±1)+1)/2`` ∈ [0,1].
+    - **percentile**: classic percentile normalization with ``heatmap_p_low/high``.
 
-    Возвращает ``(jet_scale01_bgr, jet_percentile_bgr, sim_raw, bounds_scale01, bounds_pct, per_class_probs)``.
+    Returns ``(jet_scale01_bgr, jet_percentile_bgr, sim_raw, bounds_scale01, bounds_pct, per_class_probs)``.
     """
     batch = 4096
     dev = device if device is not None else w2c.device
@@ -1649,8 +1649,8 @@ def gaussian_visible_from_any_pose(
     margin_px: float = 0.0,
 ) -> np.ndarray:
     """
-    Булева маска [N]: центр гауссиана виден хотя бы из одной камеры
-    (перед плоскостью z>z_min и внутри кадра с отступом ``margin_px``).
+    Boolean mask [N]: Gaussian center is visible from at least one camera
+    (in front of the plane z>z_min and inside the frame with margin ``margin_px``).
     """
     N = int(means_xyz.shape[0])
     visible = np.zeros((N,), dtype=bool)
@@ -1801,8 +1801,8 @@ def sam_prompt_xy_from_relevancy(
     com_top_frac: float = 0.12,
 ) -> tuple[int, int] | None:
     """
-    Точка для SAM: проекция 3D-центроида или пик / центр масс по сырой карте cos
-    (после blur, как в ``render_relevancy_map``).
+    SAM point: 3D-centroid projection or peak / center of mass on the raw cos map
+    (after blur, as in ``render_relevancy_map``).
     """
     if mode == 'centroid':
         if centroid_xy is None:
@@ -1970,97 +1970,97 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--checkpoint',        required=True)
     p.add_argument('--lang_field',        required=True)
     p.add_argument('--latent_dim',        type=int, default=None,
-                   help='Размер латента (должен совпадать с обучением). '
-                        'По умолчанию читается из lang_field.pt.')
+                   help='Latent size (must match training). '
+                        'By default read from lang_field.pt.')
     p.add_argument(
         '--poses',
         default=None,
-        help='JSON {frame_id: [[4×4]]} w2c — как раньше. '
-             'Если **не указать**, позы сэмплируются внутри объёма сцены по гауссианам '
-             '(без keyframes); камера смотрит на центроид кластера.',
+        help='JSON {frame_id: [[4×4]]} w2c — as before. '
+             'If **omitted**, poses are sampled inside the scene volume from Gaussians '
+             '(no keyframes); the camera looks at the cluster centroid.',
     )
     p.add_argument(
         '--traj_txt',
         default=None,
-        help='Путь к traj.txt (каждая строка = 16 чисел, 4x4). '
-             'Если задано, используется ТОЛЬКО этот набор поз (игнорирует --poses и автопозы).',
+        help='Path to traj.txt (each row = 16 numbers, 4x4). '
+             'If set, ONLY this pose set is used (ignores --poses and auto-poses).',
     )
     p.add_argument(
         '--traj_format',
         choices=('c2w', 'w2c'),
         default='c2w',
-        help='c2w: w2c_i = inv(c2w_i) @ c2w[0] (система LangSplatam). w2c: w_i @ inv(w[0]).',
+        help='c2w: w2c_i = inv(c2w_i) @ c2w[0] (LangSplatam frame). w2c: w_i @ inv(w[0]).',
     )
     p.add_argument(
         '--auto_pose_samples',
         type=int,
         default=4096,
-        help='Сколько случайных точек в AABB испытать до фильтра плотности (только без --poses).',
+        help='How many random AABB points to try before density filter (only without --poses).',
     )
     p.add_argument(
         '--auto_pose_max_candidates',
         type=int,
         default=96,
-        help='Максимум поз-кандидатов после фильтра (меньше = быстрее --pose_select relevancy).',
+        help='Max pose candidates after filtering (fewer = faster --pose_select relevancy).',
     )
     p.add_argument(
         '--auto_pose_seed',
         type=int,
         default=0,
-        help='RNG для автопоз.',
+        help='RNG for auto-poses.',
     )
     p.add_argument('--text',              required=True)
     p.add_argument(
         '--negative_texts',
         default='',
-        help='Негативные классы через запятую для дискриминативного скоринга, '
-             'например: "table,carpet,sofa".'
+        help='Negative classes comma-separated for discriminative scoring, '
+             'e.g.: "table,carpet,sofa".'
     )
     p.add_argument(
         '--negative_weight',
         type=float,
         default=0.35,
-        help='subtract: коэффициент в pos−w·neg. softmax_pair: масштаб каждого логита '
-             'негатива w·cos_neg_i в многоклассовом softmax (запрос без множителя w).',
+        help='subtract: coefficient in pos−w·neg. softmax_pair: scale of each negative logit '
+             'w·cos_neg_i in multi-class softmax (query without the w multiplier).',
     )
     p.add_argument(
         '--negative_mode',
         choices=('max', 'mean'),
         default='max',
-        help='Только для negative_score_mode=subtract: агрегация нескольких негативов '
-             '(max / mean). Для softmax_pair не используется — каждый негатив отдельный класс.',
+        help='Only for negative_score_mode=subtract: aggregation of multiple negatives '
+             '(max / mean). Unused for softmax_pair — each negative is a separate class.',
     )
     p.add_argument(
         '--negative_score_mode',
         choices=('softmax_pair', 'subtract'),
         default='softmax_pair',
-        help='При непустых negative_texts: softmax_pair → softmax по [cos+, w·cos_neg1, …]; '
-             'сумма вероятностей по классам = 1, карта запроса = P(query)∈[0,1]; '
-             'subtract → pos−w·neg (негативы агрегируются по --negative_mode).',
+        help='With non-empty negative_texts: softmax_pair → softmax over [cos+, w·cos_neg1, …]; '
+             'class probabilities sum to 1, query map = P(query)∈[0,1]; '
+             'subtract → pos−w·neg (negatives aggregated via --negative_mode).',
     )
     p.add_argument(
         '--softmax_inv_temp',
         type=float,
         default=10.0,
-        help='Умножение логитов перед softmax_pair (>0). Выше — резче разделение классов.',
+        help='Logit multiplier before softmax_pair (>0). Higher → sharper class separation.',
     )
     p.add_argument(
         '--negative_relu_floor',
         action='store_true',
-        help='Только negative_score_mode=subtract: обрезать score снизу на 0.'
+        help='Only negative_score_mode=subtract: clip score from below at 0.'
     )
     p.add_argument(
         '--lang_mode',
         choices=('auto', 'langsplatv2', 'langsplat'),
         default='auto',
-        help='Сценарий инференса: auto — по format в lang_field.pt; langsplatv2 — codebook; '
-             'langsplat — legacy AE (нужен --ae_ckpt).',
+        help='Inference mode: auto — from format in lang_field.pt; langsplatv2 — codebook; '
+             'langsplat — legacy AE (requires --ae_ckpt).',
     )
     p.add_argument(
         '--ae_ckpt',
         default=None,
-        help='Путь к чекпойнту автоэнкодера (legacy lang_field). '
-             'Для LangSplatV2 (format=langsplatv2) не нужен — можно опустить.',
+        help='Path to autoencoder checkpoint (legacy lang_field). '
+             'Not needed for LangSplatV2 (format=langsplatv2) — may be omitted.',
     )
     p.add_argument('--clip_model',        default='ViT-B-16')
     p.add_argument('--clip_pretrained',   default='laion2b_s34b_b88k')
@@ -2076,20 +2076,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--dbscan_min',        type=int,   default=30,
                    help='DBSCAN min_samples (default 30)')
     p.add_argument('--no_clusters', action='store_true',
-                   help='Отключить DBSCAN и использовать один кластер из всего top-% набора.')
+                   help='Disable DBSCAN and use one cluster from the whole top-% set.')
     p.add_argument(
         '--cluster_rank_by',
         choices=('total', 'mean', 'max'),
         default='mean',
-        help='Как упорядочить кластеры после DBSCAN: total — сумма скоров (крупные объекты), '
-             'mean — средний скор (лучше для «самого подходящего» объекта), '
-             'max — пиковый скор в кластере.',
+        help='How to order clusters after DBSCAN: total — score sum (large objects), '
+             'mean — mean score (better for the “best-matching” object), '
+             'max — peak score in the cluster.',
     )
     p.add_argument(
         '--gaussian_score_no_opacity',
         action='store_true',
-        help='Ранжировать гауссианы по сырому cos(CLIP) без умножения на opacity '
-             '(иначе крупные полупрозрачные облака могут доминировать в top-%%).',
+        help='Rank Gaussians by raw cos(CLIP) without multiplying by opacity '
+             '(otherwise large semi-transparent clouds can dominate top-%%).',
     )
     p.add_argument('--top_k_views',       type=int,   default=3,
                    help='Save renders for top-K clusters (default 3)')
@@ -2097,27 +2097,27 @@ def parse_args() -> argparse.Namespace:
         '--semantic_mask_mode',
         choices=('clip_langsplat', 'sam'),
         default='clip_langsplat',
-        help='Как строить ``*_semantic.png``: clip_langsplat — порог + сглаживание как LangSplatV2 '
-             'eval (без SAM, без *_s.npy); sam — старый оверлей SAM auto-mask + точечный промпт.',
+        help='How to build ``*_semantic.png``: clip_langsplat — threshold + smoothing like LangSplatV2 '
+             'eval (no SAM, no *_s.npy); sam — legacy SAM auto-mask overlay + point prompt.',
     )
     p.add_argument(
         '--semantic_mask_thresh',
         type=float,
         default=0.4,
-        help='Для semantic_mask_mode=clip_langsplat: порог на нормализованном heat после blend '
-             '(как --mask_thresh в LangSplatV2 eval_lerf).',
+        help='For semantic_mask_mode=clip_langsplat: threshold on normalized heat after blend '
+             '(like --mask_thresh in LangSplatV2 eval_lerf).',
     )
     p.add_argument(
         '--semantic_mask_large_pool',
         type=int,
         default=29,
-        help='Размер большого avg-pool перед порогом (LangSplatV2 eval: 29). Должен быть нечётным.',
+        help='Large avg-pool size before threshold (LangSplatV2 eval: 29). Must be odd.',
     )
     p.add_argument(
         '--semantic_mask_smooth_pool',
         type=int,
         default=7,
-        help='Размер avg-pool для сглаживания бинарной маски (LangSplatV2: 7).',
+        help='Avg-pool size for smoothing the binary mask (LangSplatV2: 7).',
     )
     p.add_argument('--sam_ckpt',          default='ckpts/sam_vit_b_01ec64.pth',
                    help='SAM checkpoint (only for --semantic_mask_mode sam).')
@@ -2125,108 +2125,108 @@ def parse_args() -> argparse.Namespace:
         '--sam_prompt_from',
         choices=('centroid', 'relevancy_peak', 'relevancy_com'),
         default='relevancy_com',
-        help='Точка для SAM: проекция 3D-центроида или пик / центр масс по карте relevancy '
-             '(устойчивее, чем одна проекция центроида).',
+        help='SAM point: 3D-centroid projection or peak / center of mass on the relevancy map '
+             '(more robust than a single centroid projection).',
     )
     p.add_argument(
         '--sam_com_top_frac',
         type=float,
         default=0.12,
-        help='Для --sam_prompt_from relevancy_com: верхняя доля пикселей по cos для центра масс.',
+        help='For --sam_prompt_from relevancy_com: top fraction of pixels by cos for center of mass.',
     )
     p.add_argument('--encoder_dims', nargs='+', type=int, default=None,
-                   help='Размерности энкодера AE (должны совпадать с train_language_autoencoder.py). '
-                        'None = использовать дефолты класса Autoencoder (64d).')
+                   help='AE encoder dims (must match train_language_autoencoder.py). '
+                        'None = use Autoencoder class defaults (64d).')
     p.add_argument('--decoder_dims', nargs='+', type=int, default=None,
-                   help='Размерности декодера AE. None = использовать дефолты (64d).')
+                   help='AE decoder dims. None = use defaults (64d).')
     p.add_argument('--pose_margin_px', type=float, default=12.0,
-                   help='Центроид должен проецироваться не ближе этого отступа от края кадра.')
+                   help='Centroid must project no closer than this margin from the frame edge.')
     p.add_argument('--pose_z_min', type=float, default=0.2,
-                   help='Мин. глубина центроида в координатах камеры.')
+                   help='Min centroid depth in camera coordinates.')
     p.add_argument('--no_pose_scene_bounds', action='store_true',
-                   help='Отключить ограничение «камера внутри объёма сцены» (только отладка).')
+                   help='Disable the “camera inside scene volume” constraint (debug only).')
     p.add_argument('--pose_interior_shrink', type=float, default=0.12,
-                   help='На сколько сузить перцентильный hull гауссианов с каждой стороны (0…0.25).')
+                   help='How much to shrink the Gaussian percentile hull on each side (0…0.25).')
     p.add_argument('--pose_percentile_lo', type=float, default=3.0,
-                   help='Нижний перцентиль по means3D для объёма сцены.')
+                   help='Lower percentile of means3D for the scene volume.')
     p.add_argument('--pose_percentile_hi', type=float, default=97.0,
-                   help='Верхний перцентиль по means3D для объёма сцены.')
+                   help='Upper percentile of means3D for the scene volume.')
     p.add_argument('--pose_nn_k', type=int, default=96,
-                   help='Сколько ближайших гауссиан для медианного расстояния (KD-tree).')
+                   help='How many nearest Gaussians for median distance (KD-tree).')
     p.add_argument(
         '--pose_wall_margin_m',
         type=float,
         default=0.5,
-        help='Для AABB по гауссианам: дополнительное сужение внутрь на столько метров '
-             'с каждой стороны коробки (мин. расстояние до «стен» hull). По умолчанию 0.5 м.',
+        help='For Gaussian AABB: extra inward shrink by this many meters '
+             'on each side of the box (min distance to hull “walls”). Default 0.5 m.',
     )
     p.add_argument(
         '--pose_select',
         choices=('relevancy', 'centroid'),
         default='relevancy',
-        help='Как выбрать позу для рендера кластера: relevancy — по карте cos (см. '
-             '--pose_score_mode); centroid — только геометрия (центроид ближе к центру кадра).',
+        help='How to pick a pose for cluster render: relevancy — from the cos map (see '
+             '--pose_score_mode); centroid — geometry only (centroid closer to frame center).',
     )
     p.add_argument(
         '--pose_score_mode',
         choices=('centroid_patch', 'global_mean', 'global_topmean'),
         default='global_topmean',
-        help='При --pose_select relevancy: как агрегировать карту cos по кадру. '
-             'global_topmean (по умолчанию) — среднее по верхнему %% пикселей (устойчиво); '
-             'centroid_patch — окно у проекции 3D-центроида (старое поведение).',
+        help='With --pose_select relevancy: how to aggregate the cos map over the frame. '
+             'global_topmean (default) — mean over the top %% of pixels (robust); '
+             'centroid_patch — window at the 3D-centroid projection (legacy behavior).',
     )
     p.add_argument(
         '--pose_score_top_frac',
         type=float,
         default=0.05,
-        help='Доля пикселей для global_topmean (верхняя часть распределения cos).',
+        help='Pixel fraction for global_topmean (top part of the cos distribution).',
     )
     p.add_argument(
         '--pose_patch_radius',
         type=int,
         default=10,
-        help='Полуразмер окна (px) для centroid_patch при --pose_select relevancy.',
+        help='Half-window size (px) for centroid_patch with --pose_select relevancy.',
     )
     p.add_argument(
         '--pose_reuse_across_clusters',
         action='store_true',
-        help='Разрешить один и тот же keyframe для нескольких кластеров '
-             '(по умолчанию — разные frame_id, если хватает поз).',
+        help='Allow the same keyframe for multiple clusters '
+             '(default — distinct frame_ids when enough poses are available).',
     )
     p.add_argument(
         '--pose_min_gravity',
         type=float,
         default=0.12,
-        help='Мин. «upright» по Y-up (отсекает перевёрнутые кадры). 0 = без порога по ориентации.',
+        help='Min “upright” by Y-up (filters upside-down frames). 0 = no orientation threshold.',
     )
     p.add_argument(
         '--no_pose_gravity_filter',
         action='store_true',
-        help='Не фильтровать по ориентации камеры (если сцена не Y-up).',
+        help='Do not filter by camera orientation (if the scene is not Y-up).',
     )
     p.add_argument(
         '--heatmap_norm',
         choices=('cosine01', 'percentile', 'minmax'),
         default='percentile',
-        help='percentile (по умолчанию): контрастная карта; шкала colorbar = сырое cos на перцентилях. '
-             'cosine01: (clip(cos,±1)+1)/2 ∈ [0,1] — при узком диапазоне cos карта почти однотонная. '
-             'minmax: растяжение по min–max кадра.',
+        help='percentile (default): contrasty map; colorbar scale = raw cos at percentiles. '
+             'cosine01: (clip(cos,±1)+1)/2 ∈ [0,1] — with a narrow cos range the map is nearly flat. '
+             'minmax: stretch by frame min–max.',
     )
     p.add_argument('--heatmap_p_low', type=float, default=8.0,
-                   help='Нижний перцентиль сырого cos-сходства (только для percentile).')
+                   help='Lower percentile of raw cos similarity (percentile mode only).')
     p.add_argument('--heatmap_p_high', type=float, default=98.0,
-                   help='Верхний перцентиль (только для percentile).')
+                   help='Upper percentile (percentile mode only).')
     p.add_argument('--heatmap_blur', type=float, default=3.0,
-                   help='Sigma Gaussian blur на карте схожести (px). 0 = без blur.')
+                   help='Gaussian blur sigma on the similarity map (px). 0 = no blur.')
     p.add_argument(
         '--save_outputs',
         type=str,
         default='rgb,relevancy,overlay,semantic,global,clusters3d',
-        help='Через запятую: что писать на диск. Ключи: rgb, relevancy, overlay, semantic, '
-             'global (префикс без _cluster*), clusters3d. Или all = всё (как раньше).',
+        help='Comma-separated: what to write to disk. Keys: rgb, relevancy, overlay, semantic, '
+             'global (prefix without _cluster*), clusters3d. Or all = everything (as before).',
     )
     p.add_argument('--out',               required=True,
-                   help='Output prefix.  Produces <out>_cluster<N>_rgb/overlay/… по --save_outputs')
+                   help='Output prefix.  Produces <out>_cluster<N>_rgb/overlay/… per --save_outputs')
     return p.parse_args()
 
 
@@ -2391,8 +2391,8 @@ def main() -> None:
         poses_path = Path(args.poses).expanduser()
         if not poses_path.is_file():
             raise FileNotFoundError(
-                f'Нет файла с keyframe-позами: {poses_path.resolve()}. '
-                f'Оставьте --poses пустым для автопоз, или укажите корректный путь.'
+                f'No keyframe-poses file: {poses_path.resolve()}. '
+                f'Leave --poses empty for auto-poses, or provide a valid path.'
             )
         with open(poses_path) as f:
             poses_raw = json.load(f)
@@ -2431,13 +2431,13 @@ def main() -> None:
             )
             if len(allowed_pose_ids_file) == 0:
                 print(
-                    '[error] Нет ни одной допустимой позы: центр камеры не попадает '
-                    'внутрь hull сцены по гауссианам (или keyframe_poses не в той же '
-                    'системе координат, что checkpoint). '
-                    'Подбор поз вне сцены отключён. Проверьте poses/checkpoint или '
-                    'ослабьте --pose_percentile_lo / --pose_percentile_hi / '
-                    '--pose_interior_shrink. Для отладки без ограничения: '
-                    '--no_pose_scene_bounds. Либо запустите без --poses для автопоз.'
+                    '[error] No valid pose: camera center does not fall '
+                    'inside the Gaussian scene hull (or keyframe_poses are not in the same '
+                    'coordinate frame as the checkpoint). '
+                    'Out-of-scene pose sampling is disabled. Check poses/checkpoint or '
+                    'relax --pose_percentile_lo / --pose_percentile_hi / '
+                    '--pose_interior_shrink. For debugging without the constraint: '
+                    '--no_pose_scene_bounds. Or run without --poses for auto-poses.'
                 )
                 sys.exit(1)
         lo_fb, hi_fb = _gaussian_interior_aabb(means_all, p_lo=3.0, p_hi=97.0, shrink_frac=0.12)
@@ -2453,7 +2453,7 @@ def main() -> None:
     else:
         if not args.ae_ckpt:
             sys.exit(
-                'Для legacy lang_field.pt укажите --ae_ckpt (чекпойнт автоэнкодера).'
+                'For legacy lang_field.pt specify --ae_ckpt (autoencoder checkpoint).'
             )
         ae = _load_ae(Path(args.ae_ckpt), args.encoder_dims, args.decoder_dims, device)
 
@@ -2489,8 +2489,8 @@ def main() -> None:
     )
 
     # Score all Gaussians in 512d: decode latent → CLIP space, then cosine.
-    # По умолчанию умножаем на sigmoid(opacity), чтобы почти прозрачные выбросы
-    # не забирали top-percentile; опционально — сырой cos для более «семантического» ранжирования.
+    # By default multiply by sigmoid(opacity) so nearly transparent outliers
+    # do not take the top-percentile; optionally use raw cos for more “semantic” ranking.
     with torch.no_grad():
         opacity = torch.sigmoid(
             model.params['logit_opacities'].detach().squeeze(-1)   # [N]
@@ -2839,7 +2839,7 @@ def main() -> None:
                 color_bgr = SAM_PALETTE_BGR[i % len(SAM_PALETTE_BGR)]
                 sem = _apply_mask(sem, mask2d, color_bgr, alpha=0.35)
 
-            # 2) Query cluster on top — green, via point prompt (пик relevancy или центроид)
+            # 2) Query cluster on top — green, via point prompt (relevancy peak or centroid)
             centroid_xy = project_centroid(
                 cd_target['cl']['centroid'], w2c, model.intrinsics, device)
             pt_xy = sam_prompt_xy_from_relevancy(
@@ -2907,7 +2907,7 @@ def main() -> None:
         if saved_bits:
             print(f'    saved {out}{sfx}_{{{"+".join(saved_bits)}}}.png')
 
-    # Global bundle (prefix без _cluster*): только если явно указано global
+    # Global bundle (prefix without _cluster*): only if global is explicitly requested
     if best_cam_pos is not None and 'global' in save_set:
         best_w2c = cluster_data[0]['w2c'] if cluster_data[0]['w2c'] is not None else next(
             cd['w2c'] for cd in cluster_data if cd['w2c'] is not None)

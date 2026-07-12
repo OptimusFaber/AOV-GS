@@ -1,10 +1,10 @@
 """
-ActiveOpenSemPassive — SplaTAM + фиксированная траектория (без active planning).
+ActiveOpenSemPassive — SplaTAM + fixed trajectory (no active planning).
 
-Робот следует по data/Replica/office0/traj.txt без выбора NBV / направления.
-Результаты: results/Replica/office0/Passive/run_N/
+The robot follows data/Replica/office0/traj.txt without NBV / direction selection.
+Results: results/Replica/office0/Passive/run_N/
 
-Запуск:
+Run:
 
     python src/main/activesgm.py configs/Replica/office0/ActiveOpenSemPassive.py
 """

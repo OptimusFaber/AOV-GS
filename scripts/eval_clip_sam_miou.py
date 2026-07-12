@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Оценка: SAM (автомаски) + CLIP → для каждого **текстового класса** выбирается маска с
-максимальным cosine к эмбеддингу запроса → **mIoU** с GT semantic Replica.
+Evaluation: SAM (auto-masks) + CLIP → for each **text class**, pick the mask with
+maximum cosine to the query embedding → **mIoU** vs Replica GT semantics.
 
-Режимы:
+Modes:
 
-1) **Один класс на весь бенч** — ``--class_name chair`` (как раньше).
+1) **One class for the whole bench** — ``--class_name chair`` (as before).
 
-2) **Список классов на каждый кадр из JSON** — ``--queries_json path.json``:
-   для каждого изображения задаются имена классов Replica; SAM один раз на кадр,
-   эмбеддинги масок один раз, тексты батчом → для каждого класса свой argmax по маскам.
+2) **Per-frame class list from JSON** — ``--queries_json path.json``:
+   each image gets Replica class names; SAM runs once per frame,
+   mask embeddings once, texts in a batch → per-class argmax over masks.
 
-Формат ``queries.json``::
+``queries.json`` format::
 
     {
       "version": 1,
@@ -21,17 +21,17 @@
       }
     }
 
-Необязательно: значение-объект вместо списка::
+Optional: object value instead of a list::
 
     "0": {
       "classes": ["chair", "table"],
       "queries": { "chair": "a wooden chair", "table": "office desk" }
     }
 
-Если для ``sample_id`` нет записи в JSON — кадр пропускается (или задайте
-``--queries_from_gt`` — классы берутся из уникальных id на GT, имена из ``info_semantic``).
+If ``sample_id`` has no JSON entry — the frame is skipped (or set
+``--queries_from_gt`` — classes from unique GT ids, names from ``info_semantic``).
 
-GT: ``semantic_map_*.npy``. Запуск из New-Proj::
+GT: ``semantic_map_*.npy``. Run from New-Proj::
 
     python scripts/eval_clip_sam_miou.py \\
         --manifest data/benchmarks/replica_sem100/manifest.json \\
@@ -103,7 +103,7 @@ def _resolve_class_id(query: str, name_to_id: dict[str, int]) -> int:
     for k, v in name_to_id.items():
         if "-" not in k and k == q:
             return v
-    raise ValueError(f"Класс не найден в info_semantic: {query!r}. Примеры: chair, table, sofa")
+    raise ValueError(f"Class not found in info_semantic: {query!r}. Examples: chair, table, sofa")
 
 
 def _binary_iou(pred: np.ndarray, gt: np.ndarray) -> float:
@@ -115,14 +115,14 @@ def _binary_iou(pred: np.ndarray, gt: np.ndarray) -> float:
 
 
 def _parse_queries_entry(entry: Any) -> tuple[list[str], dict[str, str]]:
-    """Возвращает (class_names, optional per-class query override)."""
+    """Returns (class_names, optional per-class query override)."""
     if isinstance(entry, list):
         return [str(x).strip() for x in entry], {}
     if isinstance(entry, dict):
         classes = [str(x).strip() for x in entry.get("classes", [])]
         qmap = {k.strip().lower(): str(v) for k, v in entry.get("queries", {}).items()}
         return classes, qmap
-    raise ValueError(f"Неверная запись queries JSON: {entry!r}")
+    raise ValueError(f"Invalid queries JSON entry: {entry!r}")
 
 
 def _load_queries_json(path: Path) -> dict[str, Any]:
@@ -138,13 +138,13 @@ def _load_queries_json(path: Path) -> dict[str, Any]:
             else:
                 out[sid] = row
         return out
-    raise ValueError("JSON: ожидаются ключи by_sample_id или samples")
+    raise ValueError("JSON: expected keys by_sample_id or samples")
 
 
 def _classes_from_semantic(
     sem: np.ndarray, id_to_name: dict[int, str]
 ) -> list[str]:
-    """Уникальные классы на карте (id > 0), имена из info_semantic."""
+    """Unique classes on the map (id > 0), names from info_semantic."""
     u = np.unique(sem.astype(np.int64))
     names: list[str] = []
     for uid in u:
@@ -163,7 +163,7 @@ def _embed_texts_batch(
     device: torch.device,
     ae,
 ) -> torch.Tensor:
-    """(Q, D) L2-normalized (или латент при AE)."""
+    """(Q, D) L2-normalized (or latent when AE is used)."""
     tokens = tok(texts).to(device)
     q = F.normalize(clip_model.encode_text(tokens), dim=-1)
     if ae is not None:
@@ -182,25 +182,25 @@ def main() -> None:
     ap.add_argument(
         "--class_name",
         default=None,
-        help="Один класс на все кадры (режим без --queries_json)",
+        help="One class for all frames (mode without --queries_json)",
     )
     ap.add_argument(
         "--queries_json",
         type=Path,
         default=None,
-        help="JSON: классы на каждый sample_id (см. докстринг)",
+        help="JSON: classes per sample_id (see docstring)",
     )
     ap.add_argument(
         "--queries_from_gt",
         action="store_true",
-        help="Игнорировать списки в JSON и брать классы с GT (уникальные id)",
+        help="Ignore JSON lists and take classes from GT (unique ids)",
     )
     ap.add_argument(
         "--text_template",
         default="a {class_name}",
-        help="Шаблон текста CLIP, если нет переопределения в JSON (по умолчанию: 'a {class_name}')",
+        help="CLIP text template if no JSON override (default: 'a {class_name}')",
     )
-    ap.add_argument("--text_query", default=None, help="Только для режима --class_name")
+    ap.add_argument("--text_query", default=None, help="Only for --class_name mode")
     ap.add_argument(
         "--device",
         default="cuda:0",
@@ -211,7 +211,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.class_name is None and args.queries_json is None and not args.queries_from_gt:
-        raise SystemExit("Задайте --class_name или --queries_json или --queries_from_gt")
+        raise SystemExit("Provide --class_name or --queries_json or --queries_from_gt")
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     man_path = _resolve(args.manifest)

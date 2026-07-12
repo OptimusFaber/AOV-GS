@@ -1,28 +1,31 @@
 #!/usr/bin/env python3
 """
-Validate language field on full Replica traj + Habitat semantics (LangSplatV2 s/m/l pyramid).
+Validate language field on full Replica traj + Habitat semantics (LangSplatV2 or V1 s/m/l pyramid).
 
 For each (frame × class): render relevancy at selected SAM levels, pick best level
 (argmax fused heatmap, as LangSplatV2 ``eval_lerf.py``), binarize, compute IoU vs GT.
+
+LangSplatV2 (default): ``lang_field_{level}k{K}_l{L}/``, raw 512-D CLIP queries.
+LangSplatV1 (``--legacy --latent_dim D``): ``lang_field_{level}{D}/``, AE decode at render.
 
 Writes ``metrics.json``, ``pairs.csv``, ``miou_summary.txt``, ``miou_per_class.csv``.
 With ``--semsplatam_metrics`` also writes ActiveSem-style frame metrics
 (``miou_g``, ``miou_g_curr``, ``miou_p``, ``miou_p_curr``) to ``semantic_result.txt``.
 
-By default ``--eval_preset val_results_sml_levels`` matches
-``val-results-sml-levels/`` (s/m/l, thresh 0.55, hyphen class names,
-default CLIP negatives, ``align_gs_train_frame``).
-
-Example (pair mIoU + frame metrics; pseudo = SAM+CLIP on rendered SplaTAM RGB)::
+Example (V2)::
 
     python scripts/validate_lang_field_traj.py \\
       --scene office0 \\
       --result_dir results/Replica/office0/ActiveOpenSem/run_0 \\
-      --traj_txt data/replica_sim_nvs/office0/traj.txt \\
-      --semsplatam_metrics \\
-      --pseudo_source sam_clip \\
-      --pseudo_rgb_source rendered \\
-      --out_dir results/Replica/office0/ActiveOpenSem/run_0/lang_field_traj_eval
+      --traj_txt data/replica_sim_nvs/office0/traj.txt
+
+Example (V1 / legacy)::
+
+    python scripts/validate_lang_field_traj.py \\
+      --legacy --latent_dim 16 --ae_ckpt ckpt/office0/16/best.pth \\
+      --scene office0 \\
+      --result_dir results/Replica/office0/ActiveOpenVocab/run_0 \\
+      --traj_txt data/replica_sim_nvs/office0/traj.txt
 """
 
 from __future__ import annotations
@@ -104,6 +107,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lang_field_s", default=None)
     p.add_argument("--lang_field_m", default=None)
     p.add_argument("--lang_field_l", default=None)
+    p.add_argument(
+        "--legacy",
+        action="store_true",
+        help="LangSplatV1 checkpoints (lang_field_{level}{D}/, AE decode at query time).",
+    )
+    p.add_argument(
+        "--latent_dim",
+        type=int,
+        default=16,
+        help="AE latent dim D for --legacy (paths lang_field_sD, lang_field_mD, lang_field_lD).",
+    )
+    p.add_argument(
+        "--ae_ckpt",
+        default=None,
+        help="AE checkpoint for --legacy (default: ckpt/<scene>/<D>/best.pth).",
+    )
+    p.add_argument("--encoder_dims", nargs="+", type=int, default=None)
+    p.add_argument("--decoder_dims", nargs="+", type=int, default=None)
     p.add_argument("--codebook_size", type=int, default=64)
     p.add_argument("--vq_layer_num", type=int, default=1)
     p.add_argument(
@@ -127,7 +148,7 @@ def parse_args() -> argparse.Namespace:
         "--eval_preset",
         choices=("none", lfu.EVAL_PRESET_VAL_RESULTS_SML_LEVELS),
         default=lfu.EVAL_PRESET_VAL_RESULTS_SML_LEVELS,
-        help="Evaluation defaults; val_results_sml_levels = val-results-sml-levels/ "
+        help="Evaluation defaults; val_results_sml_levels = results/metrics-archive/val-results-sml-levels/ "
         "(s/m/l, thresh 0.55, a desk-organizer queries, default negatives). "
         "Use none to keep CLI defaults only.",
     )
@@ -143,12 +164,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--softmax_inv_temp", type=float, default=10.0)
     p.add_argument("--clip_model", default="ViT-B-16")
     p.add_argument("--clip_pretrained", default="laion2b_s34b_b88k")
-    p.add_argument(
-        "--device",
-        default="cuda:0",
-        help="Torch device for rendering and CLIP (default cuda:0). "
-        "With CUDA_VISIBLE_DEVICES=N pass cuda:0 inside the process.",
-    )
+    p.add_argument("--device", default="cuda:0")
     p.add_argument("--no_localization", action="store_true")
     p.add_argument("--allow_mixed_paths", action="store_true")
     p.add_argument(
@@ -229,21 +245,36 @@ def main() -> None:
     out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else (result_dir / "lang_field_traj_eval")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    lang_field_paths = lfu.resolve_lang_field_paths(
-        result_dir,
-        levels=active_levels,
-        codebook_size=int(args.codebook_size),
-        vq_layer_num=int(args.vq_layer_num),
-        lang_field_s=args.lang_field_s,
-        lang_field_m=args.lang_field_m,
-        lang_field_l=args.lang_field_l,
-    )
+    use_legacy = bool(args.legacy)
+    if use_legacy:
+        lang_field_paths = lfu.resolve_lang_field_paths_legacy(
+            result_dir,
+            levels=active_levels,
+            latent_dim=int(args.latent_dim),
+            lang_field_s=args.lang_field_s,
+            lang_field_m=args.lang_field_m,
+            lang_field_l=args.lang_field_l,
+        )
+        train_hint = (
+            "scripts/aov-gs/03_train_gaussian_lang_field_langsplatv1_all_levels.sh "
+            f"(D={int(args.latent_dim)})"
+        )
+    else:
+        lang_field_paths = lfu.resolve_lang_field_paths(
+            result_dir,
+            levels=active_levels,
+            codebook_size=int(args.codebook_size),
+            vq_layer_num=int(args.vq_layer_num),
+            lang_field_s=args.lang_field_s,
+            lang_field_m=args.lang_field_m,
+            lang_field_l=args.lang_field_l,
+        )
+        train_hint = "scripts/aov-gs/03_train_gaussian_lang_field_all_levels.sh"
     for lvl, pth in lang_field_paths.items():
         if not pth.is_file():
             raise FileNotFoundError(
                 f"Missing lang_field for level {lvl!r}: {pth}\n"
-                f"Train with scripts/aov-gs/03_train_gaussian_lang_field_all_levels.sh "
-                f"or pass --lang_field_{lvl}",
+                f"Train with {train_hint} or pass --lang_field_{lvl}",
             )
 
     if args.checkpoint is None:
@@ -255,11 +286,14 @@ def main() -> None:
         checkpoint = Path(args.checkpoint).expanduser().resolve()
 
     if args.info_semantic is None:
-        scene_prefix = args.scene[:-1]
-        scene_idx = args.scene[-1]
-        info_semantic = (
-            Path(_ROOT) / "data/replica_v1" / f"{scene_prefix}_{scene_idx}" / "habitat" / "info_semantic.json"
-        ).resolve()
+        if lfu.is_scannet_scene_name(args.scene):
+            info_semantic = lfu.ensure_scannet_nyu40_info_semantic()
+        else:
+            scene_prefix = args.scene[:-1]
+            scene_idx = args.scene[-1]
+            info_semantic = (
+                Path(_ROOT) / "data/replica_v1" / f"{scene_prefix}_{scene_idx}" / "habitat" / "info_semantic.json"
+            ).resolve()
     else:
         info_semantic = Path(args.info_semantic).expanduser().resolve()
 
@@ -292,7 +326,15 @@ def main() -> None:
         sem_index, frame_ids_sorted, id_to_name, exclude_ids=exclude_ids,
     )
     if not class_names:
-        raise SystemExit("No named classes discovered in semantics.")
+        uniq = lfu.sample_semantic_unique_ids(sem_index, frame_ids_sorted)
+        raise SystemExit(
+            "No named classes discovered in semantics.\n"
+            f"  info_semantic: {info_semantic}\n"
+            f"  known ids (sample): {sorted(id_to_name.keys())[:20]}\n"
+            f"  unique ids in GT (sample): {uniq[:30]}\n"
+            "  ScanNet: use configs/ScanNet/nyu40_info_semantic.json "
+            "(not class_info_file.json OneFormer ids)."
+        )
 
     train0 = None
     if args.align_gs_train_frame:
@@ -309,8 +351,13 @@ def main() -> None:
     hyphen_repl = args.class_name_replace_hyphen_with
     if hyphen_repl is not None and hyphen_repl == "":
         hyphen_repl = " "
+    _query_name = (
+        (lambda cn: lfu.scannet_query_class_name(cn))
+        if lfu.is_scannet_scene_name(args.scene)
+        else (lambda cn: cn)
+    )
     text_queries = [
-        lfu.build_text_query(cn, args.text_template, replace_hyphen_with=hyphen_repl)
+        lfu.build_text_query(_query_name(cn), args.text_template, replace_hyphen_with=hyphen_repl)
         for cn in class_names
     ]
 
@@ -318,8 +365,43 @@ def main() -> None:
     latent_dim = qlf.infer_latent_dim(lang_field_paths[first_lvl])
     model = qlf.LangSplatam(checkpoint_path=str(checkpoint), latent_dim=latent_dim, device=str(device))
     model.load_lang_field(lang_field_paths[first_lvl])
-    if getattr(model, "model_format", "legacy") != "langsplatv2":
-        raise SystemExit("LangSplatV2 lang_field checkpoints required (train with 03_train_gaussian_lang_field.sh).")
+    model_format = getattr(model, "model_format", "legacy")
+    if use_legacy:
+        if model_format == "langsplatv2":
+            raise SystemExit(
+                "Expected LangSplatV1 (legacy) checkpoints with --legacy; "
+                "got LangSplatV2. Drop --legacy or use V2 training scripts.",
+            )
+    elif model_format != "langsplatv2":
+        raise SystemExit(
+            "LangSplatV2 lang_field checkpoints required "
+            "(train with 03_train_gaussian_lang_field.sh). "
+            "For V1 add --legacy --latent_dim D.",
+        )
+
+    ae = None
+    ae_ckpt_path: Path | None = None
+    if use_legacy:
+        if args.ae_ckpt:
+            ae_ckpt_path = Path(args.ae_ckpt).expanduser().resolve()
+        else:
+            scene_ckpt_dir = Path(_ROOT / "ckpt" / args.scene).resolve()
+            ae_ckpt_path = lfu.pick_ae_ckpt(scene_ckpt_dir, latent_dim, str(device))
+        if ae_ckpt_path is None or not ae_ckpt_path.is_file():
+            raise FileNotFoundError(
+                f"AE checkpoint not found for latent_dim={latent_dim}. "
+                f"Pass --ae_ckpt or place weights at ckpt/{args.scene}/{latent_dim}/best.pth.",
+            )
+        enc_dims, dec_dims = (
+            (list(args.encoder_dims), list(args.decoder_dims))
+            if args.encoder_dims and args.decoder_dims
+            else lfu.default_ae_architecture(latent_dim)
+        )
+        ae = qlf._load_ae(ae_ckpt_path, enc_dims, dec_dims, device)
+        print(
+            f"[lang-field-traj] LangSplatV1 D={latent_dim} ae_ckpt={ae_ckpt_path}",
+            file=sys.stderr,
+        )
 
     H = int(model.params["org_height"])
     W = int(model.params["org_width"])
@@ -398,7 +480,7 @@ def main() -> None:
     frame_score_maps: dict[int, dict[str, np.ndarray]] = {}
 
     render_kw_base = dict(
-        ae=None,
+        ae=ae,
         negative_weight=float(args.negative_weight),
         negative_mode=str(args.negative_mode),
         negative_relu_floor=bool(args.negative_relu_floor),
@@ -406,7 +488,7 @@ def main() -> None:
         W=W,
         device=device,
         blur_sigma=float(args.heatmap_blur),
-        use_v2=True,
+        use_v2=not use_legacy,
         negative_score_mode=str(args.negative_score_mode),
         softmax_inv_temp=float(args.softmax_inv_temp),
     )
@@ -526,7 +608,10 @@ def main() -> None:
         "levels": list(active_levels),
         "lang_fields": {lvl: str(lang_field_paths[lvl]) for lvl in active_levels},
         "checkpoint": str(checkpoint),
-        "langsplat_v2": True,
+        "langsplat_v1": use_legacy,
+        "langsplat_v2": not use_legacy,
+        "latent_dim": latent_dim if use_legacy else None,
+        "ae_ckpt": str(ae_ckpt_path) if use_legacy and ae is not None else None,
         "multilevel_mode": "langsplat_eval_lerf_pyramid",
         "aligned_train_frame": bool(args.align_gs_train_frame),
         "text_template": str(args.text_template),

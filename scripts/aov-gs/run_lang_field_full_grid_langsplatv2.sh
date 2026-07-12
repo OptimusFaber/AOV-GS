@@ -1,21 +1,21 @@
 #!/bin/bash
 ##################################################
-# LangSplatV2 — сетка обучения language field (этап 3)
+# LangSplatV2 — language field training grid (stage 3)
 #
-# Требуется только RESULT_DIR/language_features/ (raw SAM+CLIP, 512-D) после этапа 1.
-# Шаг автоэнкодера (language_features_dim*) не нужен.
+# Only RESULT_DIR/language_features/ (raw SAM+CLIP, 512-D) is required after stage 1.
+# Autoencoder step (language_features_dim*) is not needed.
 #
-# Параметры сетки задаются через env:
-#   GRID_K_VALUES   — пробел-разделённые K (codebook_size), по умолч. "64"
-#   GRID_L_VALUES   — пробел-разделённые L (vq_layer_num), по умолч. "1"
-#   GRID_TOPK       — top-k sparse на уровень, по умолч. "4"
-#   GRID_LEVELS     — уровни SAM, по умолч. "s m l"
-#   NUM_ITERS       — итерации на задачу, по умолч. 30000
+# Grid parameters are set via env:
+#   GRID_K_VALUES   — space-separated K (codebook_size), default "64"
+#   GRID_L_VALUES   — space-separated L (vq_layer_num), default "1"
+#   GRID_TOPK       — top-k sparse per level, default "4"
+#   GRID_LEVELS     — SAM levels, default "s m l"
+#   NUM_ITERS       — iterations per job, default 30000
 #   DEVICE          — cuda:0
 #   RENDER_CHECKPOINT — auto | on | off
-#   LOG_DIR         — stdout логи (default: RESULT_DIR/lang_field_grid_logs)
+#   LOG_DIR         — stdout logs (default: RESULT_DIR/lang_field_grid_logs)
 #
-# Пример:
+# Example:
 #   GRID_K_VALUES="32 64" NUM_ITERS=12000 bash scripts/aov-gs/run_lang_field_full_grid.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0
 ##################################################
@@ -41,7 +41,7 @@ LOG_DIR="${LOG_DIR:-${RESULT_DIR}/lang_field_grid_logs}"
 mkdir -p "$LOG_DIR"
 
 if [ ! -d "${RESULT_DIR}/language_features" ]; then
-    echo "ERROR: нет ${RESULT_DIR}/language_features — сначала этап 1 (SLAM + SAM/CLIP)."
+    echo "ERROR: missing ${RESULT_DIR}/language_features — run stage 1 first (SLAM + SAM/CLIP)."
     exit 1
 fi
 
@@ -58,7 +58,7 @@ CHECKPOINT="$(_pick_ckpt)"
 POSES="${RESULT_DIR}/keyframe_poses.json"
 
 if [ ! -f "$POSES" ]; then
-    echo "ERROR: нет $POSES"
+    echo "ERROR: missing $POSES"
     exit 1
 fi
 
@@ -130,8 +130,8 @@ done
 
 echo ""
 if [ "$_failed" -eq 0 ]; then
-    echo "[$(_ts)] Готово. lang_field.pt в lang_field_*k*_l*/ ; stdout: $LOG_DIR"
+    echo "[$(_ts)] Done. lang_field.pt in lang_field_*k*_l*/ ; stdout: $LOG_DIR"
 else
-    echo "[$(_ts)] Были ошибки — см. $LOG_DIR/stdout_*.log"
+    echo "[$(_ts)] Errors occurred — see $LOG_DIR/stdout_*.log"
     exit 1
 fi
