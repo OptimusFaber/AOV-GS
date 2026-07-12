@@ -19,7 +19,10 @@ services:
     runtime: nvidia
     environment:
       NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics,display
+      __EGL_VENDOR_LIBRARY_FILENAMES: /etc/glvnd/egl_vendor.d/10_nvidia.json
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
+      EGL_PLATFORM: surfaceless
     volumes:
       - ..:/workspace/AOV-GS
       - aov-gs-data:/workspace/AOV-GS/data

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install pytorch3d + torch-scatter/sparse inside active-sgm env.
+# Install pytorch3d + torch-scatter/sparse inside aov-gs env.
 # Uses local docker/wheels/*.whl if present, else tries direct URLs.
 # If pytorch3d wheel is blocked (e.g. 403), falls back to source build.
 set -euo pipefail

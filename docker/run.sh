@@ -13,6 +13,8 @@ TAG="${TAG:-aov-gs:cuda117}"
 docker run --rm -it \
   --gpus all \
   --shm-size=16g \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display \
   -v "${ROOT}:/workspace/AOV-GS" \
   -v aov-gs-data:/workspace/AOV-GS/data \
   -v aov-gs-results:/workspace/AOV-GS/results \

@@ -8,6 +8,7 @@
 #     --build-arg HTTP_PROXY=http://user:pass@host:3128 \
 #     --build-arg HTTPS_PROXY=http://user:pass@host:3128 .
 
+# CUDA 11.7 devel (cudagl:11.7.1 tag removed from Docker Hub). Habitat EGL: glvnd ICD + runtime NVIDIA libs.
 FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
 
 ARG HTTP_PROXY=
@@ -24,10 +25,15 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     LC_ALL=C.UTF-8 \
     LANG=C.UTF-8 \
     CONDA_DIR=/opt/conda \
-    ENV_NAME=active-sgm \
+    ENV_NAME=aov-gs \
     CUDA_HOME=/usr/local/cuda \
-    PATH=/opt/conda/envs/active-sgm/bin:/opt/conda/bin:/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    PATH=/opt/conda/envs/aov-gs/bin:/opt/conda/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display \
+    __EGL_VENDOR_LIBRARY_FILENAMES=/etc/glvnd/egl_vendor.d/10_nvidia.json \
+    __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    EGL_PLATFORM=surfaceless \
     TCNN_CUDA_ARCHITECTURES=75;80;86 \
     TORCH_CUDA_ARCH_LIST=8.0;8.6 \
     MAX_JOBS=4 \
@@ -36,16 +42,28 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 
 # ── system deps ──────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git wget curl ca-certificates \
+    git wget curl ca-certificates unzip zip pigz jq rsync \
     build-essential cmake ninja-build pkg-config \
-    libgl1-mesa-dev libegl1-mesa-dev libglfw3-dev libglm-dev \
+    libglvnd0 libgl1 libegl1 libgl1-mesa-dev libegl1-mesa-dev \
+    libglfw3-dev libglm-dev \
     libx11-dev libxext-dev libxi-dev libxfixes-dev \
     libglib2.0-0 libsm6 libxrender1 libgomp1 \
     python3.8 python3.8-dev python3.8-distutils \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Miniforge (conda-forge, без Anaconda ToS) + env ─────────────────────────
-# Miniconda latest требует `conda tos accept` — в Docker неудобно; Miniforge OK.
+RUN mkdir -p /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d \
+    && printf '%s\n' \
+         '{' \
+         '  "file_format_version": "1.0.0",' \
+         '  "ICD": {' \
+         '    "library_path": "libEGL_nvidia.so.0"' \
+         '  }' \
+         '}' \
+       > /etc/glvnd/egl_vendor.d/10_nvidia.json \
+    && cp /etc/glvnd/egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+# ── Miniforge (conda-forge, no Anaconda ToS) + env ─────────────────────────
+# Miniconda latest requires `conda tos accept` — awkward in Docker; Miniforge is fine.
 ARG MINIFORGE_VERSION=24.11.3-0
 RUN wget -qO /tmp/miniforge.sh \
       "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-Linux-x86_64.sh" \
@@ -60,8 +78,8 @@ SHELL ["/bin/bash", "-lc"]
 
 # ── PyTorch (robust download + local install) ────────────────────────────────
 # NOTE:
-# - torch wheel ~1.8GB и часто "висит" через VPN/CDN.
-# - Сначала скачиваем wheel с retry/fallback, затем ставим локально.
+# - torch wheel ~1.8GB and often stalls via VPN/CDN.
+# - First download the wheel with retry/fallback, then install locally.
 RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
     && conda activate ${ENV_NAME} \
     && TORCH_WHL="torch-1.13.1+cu117-cp38-cp38-linux_x86_64.whl" \
@@ -79,7 +97,7 @@ RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
     && rm -f "/tmp/${TORCH_WHL}" \
     && python -c "import torch; assert torch.cuda.is_available() or True; print('torch', torch.__version__)"
 
-# ── pytorch3d + PyG (direct .whl, устойчиво к таймаутам pip -f) ─────────────
+# ── pytorch3d + PyG (direct .whl, resilient to pip -f timeouts) ─────────────
 COPY docker/install_pytorch3d_pyg.sh /tmp/install_pytorch3d_pyg.sh
 COPY docker/wheels/ /tmp/wheels/
 RUN chmod +x /tmp/install_pytorch3d_pyg.sh \
@@ -96,7 +114,12 @@ RUN if [ "${BUILD_HABITAT}" = "1" ]; then \
       source ${CONDA_DIR}/etc/profile.d/conda.sh \
       && conda activate ${ENV_NAME} \
       && (conda install -y -c conda-forge -c aihabitat habitat-sim=0.2.3 headless \
-          || conda install -y -c conda-forge -c aihabitat habitat-sim headless); \
+          || conda install -y -c conda-forge -c aihabitat habitat-sim headless) \
+      && for _egl in libEGL.so libEGL.so.1 libGLESv2.so libGLESv2.so.2; do \
+           if [ -f "${CONDA_PREFIX}/lib/${_egl}" ]; then \
+             mv "${CONDA_PREFIX}/lib/${_egl}" "${CONDA_PREFIX}/lib/${_egl}.mesa.bak"; \
+           fi; \
+         done; \
     else \
       echo "Skipping habitat-sim installation (BUILD_HABITAT=${BUILD_HABITAT})"; \
     fi
@@ -136,8 +159,16 @@ RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \
 # ── install scripts copied for reference / re-run ────────────────────────────
 WORKDIR /workspace/AOV-GS
 COPY docker/entrypoint.sh /usr/local/bin/aov-gs-entrypoint.sh
+COPY docker/nvidia_habitat_env.sh /usr/local/bin/nvidia_habitat_env.sh
+COPY docker/habitat_mesa_fixup.sh /usr/local/bin/habitat_mesa_fixup.sh
+COPY docker/ensure_habitat_egl.sh /usr/local/bin/ensure_habitat_egl.sh
 COPY docker/bootstrap_third_parties.sh /usr/local/bin/bootstrap_third_parties.sh
-RUN chmod +x /usr/local/bin/aov-gs-entrypoint.sh /usr/local/bin/bootstrap_third_parties.sh
+RUN chmod +x \
+    /usr/local/bin/aov-gs-entrypoint.sh \
+    /usr/local/bin/nvidia_habitat_env.sh \
+    /usr/local/bin/habitat_mesa_fixup.sh \
+    /usr/local/bin/ensure_habitat_egl.sh \
+    /usr/local/bin/bootstrap_third_parties.sh
 
 # ── smoke test ───────────────────────────────────────────────────────────────
 RUN source ${CONDA_DIR}/etc/profile.d/conda.sh \

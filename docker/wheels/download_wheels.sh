@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скачать wheels на машине с нормальным интернетом, положить в docker/wheels/, затем docker build.
+# Download wheels on a machine with normal internet, put them in docker/wheels/, then docker build.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
@@ -14,4 +14,4 @@ wget -c --tries=10 -O torch_sparse-0.6.17+pt113cu117-cp38-cp38-linux_x86_64.whl 
   https://data.pyg.org/whl/torch-1.13.1+cu117/torch_sparse-0.6.17+pt113cu117-cp38-cp38-linux_x86_64.whl
 
 ls -lh *.whl
-echo "OK — теперь: bash docker/build.sh"
+echo "OK — next: bash docker/build.sh"

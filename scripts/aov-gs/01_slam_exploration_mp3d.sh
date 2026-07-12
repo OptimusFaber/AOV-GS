@@ -27,7 +27,7 @@ set -e
 
 PROJ_DIR_EARLY="$(cd "$(dirname "$0")/../.." && pwd)"
 if [[ -f /.dockerenv ]]; then
-    bash "${PROJ_DIR_EARLY}/docker/ensure_habitat_ptex.sh" 2>/dev/null || true
+    bash "${PROJ_DIR_EARLY}/docker/ensure_habitat_egl.sh" 2>/dev/null || true
 fi
 
 SCENE=${1:-GdvgFV5R1Z5}
