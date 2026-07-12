@@ -5,8 +5,7 @@
 1. [Quick start (one script)](#quick-start-one-script)
 2. [`third_parties`](#third_parties)
 3. [Conda manually](#conda-manually)
-4. [HPC without libcuda](#hpc-without-libcuda)
-5. [Docker](#docker)
+4. [Docker](#docker)
 
 ---
 
@@ -59,15 +58,6 @@ bash scripts/installation/download_sam_ckpt.sh
 ```
 
 Check: `python -c "import torch; print(torch.cuda.is_available())"`
-
----
-
-## HPC without libcuda
-
-```bash
-bash scripts/installation/conda_env/build_sem_cds2.sh
-# or: bash scripts/installation/conda_env/build_sem_cds2.sh --fix-tcnn
-```
 
 ---
 

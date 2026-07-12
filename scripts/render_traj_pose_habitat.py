@@ -15,7 +15,7 @@ EN: Both outputs are identical upright RGB matching ``generate_Replica_NVS_data`
 
 Example::
 
-  cd New-Proj
+  cd AOV-GS
   python scripts/render_traj_pose_habitat.py \\
     --cfg configs/Replica/office0/generate_nvs_data.py \\
     --traj data/replica_sim_nvs/office0/traj.txt \\

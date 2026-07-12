@@ -15,7 +15,7 @@
 # Do not touch: splatam/, exploration_path_poses.json (SemSplaTAM ActiveSem backup).
 # Next lang-field: bash scripts/aov-gs/03_train_gaussian_lang_field.sh ...
 #
-# Usage (from AOV-GS-V2 root):
+# Usage (from AOV-GS root):
 #   bash scripts/aov-gs/run_replica_activesem_samclip.sh
 #
 # Single scene:
@@ -75,12 +75,8 @@ mkdir -p "${LOG_DIR}"
 
 if [[ -n "${CONDA_PREFIX:-}" ]] && [[ -x "${CONDA_PREFIX}/bin/python" ]]; then
   PY="${CONDA_PREFIX}/bin/python"
-elif [[ -x /home/optimus/anaconda3/envs/aov-gs/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/aov-gs/bin/python
-elif [[ -x /home/optimus/anaconda3/envs/active-gs/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/active-gs/bin/python
-elif [[ -x /home/optimus/anaconda3/envs/active-sgm/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/active-sgm/bin/python
+elif command -v python >/dev/null 2>&1; then
+  PY="$(command -v python)"
 elif command -v python3 >/dev/null 2>&1; then
   PY=python3
 else

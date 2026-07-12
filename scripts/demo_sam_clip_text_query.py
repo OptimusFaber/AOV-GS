@@ -28,8 +28,8 @@ import numpy as np
 import torch
 
 
-_HERE = Path(__file__).resolve().parent          # New-Proj/scripts
-_PROJ = _HERE.parent                              # New-Proj/
+_HERE = Path(__file__).resolve().parent          # AOV-GS/scripts
+_PROJ = _HERE.parent                              # AOV-GS/
 if str(_PROJ) not in sys.path:
     sys.path.insert(0, str(_PROJ))
 

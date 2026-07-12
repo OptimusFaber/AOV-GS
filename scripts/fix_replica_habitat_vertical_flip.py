@@ -10,7 +10,7 @@ Processes under ``results_habitat`` (or similar):
   - ``depth*.png`` (uint16)
   - ``semantic/semantic_map_*.npy``
 
-Run from New-Proj::
+Run from AOV-GS::
 
     python scripts/fix_replica_habitat_vertical_flip.py \\
         --dir data/replica_sim_nvs/office0/results_habitat

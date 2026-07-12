@@ -31,7 +31,7 @@ Optional: object value instead of a list::
 If ``sample_id`` has no JSON entry — the frame is skipped (or set
 ``--queries_from_gt`` — classes from unique GT ids, names from ``info_semantic``).
 
-GT: ``semantic_map_*.npy``. Run from New-Proj::
+GT: ``semantic_map_*.npy``. Run from AOV-GS::
 
     python scripts/eval_clip_sam_miou.py \\
         --manifest data/benchmarks/replica_sem100/manifest.json \\

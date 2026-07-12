@@ -128,7 +128,7 @@ _preflight() {
   if [[ ! -f "${cfg}" ]]; then
     log "ERROR [${scene}]: missing ${cfg}"
     log "  Need ActiveSemTrajLangPassive config (passive replay, NOT ActiveSem.py)."
-    log "  Copy from AOV-GS-V2/configs/Replica/${scene}/ActiveSemTrajLangPassive.py"
+    log "  Copy from AOV-GS/configs/Replica/${scene}/ActiveSemTrajLangPassive.py"
     return 1
   fi
 

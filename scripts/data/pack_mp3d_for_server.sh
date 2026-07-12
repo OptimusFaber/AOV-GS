@@ -24,8 +24,8 @@
 # On the server:
 #   mkdir -p /path/to/data
 #   tar -xzf mp3d_active_sgm_5scenes.tar.gz -C /path/to/data
-#   ln -sfn /path/to/data/MP3D /path/to/AOV-GS-V2/data/MP3D
-#   ln -sfn /path/to/data/mp3d_sim_nvs_v2 /path/to/AOV-GS-V2/data/mp3d_sim_nvs_v2
+#   ln -sfn /path/to/data/MP3D /path/to/AOV-GS/data/MP3D
+#   ln -sfn /path/to/data/mp3d_sim_nvs_v2 /path/to/AOV-GS/data/mp3d_sim_nvs_v2
 
 set -euo pipefail
 

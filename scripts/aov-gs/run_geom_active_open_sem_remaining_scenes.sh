@@ -7,7 +7,7 @@
 #   bash scripts/aov-gs/run_geom_active_open_sem_remaining_scenes.sh
 #
 # One-liner (background + log):
-#   cd AOV-GS-V2 && nohup bash scripts/aov-gs/run_geom_active_open_sem_remaining_scenes.sh > geom_active_open_sem_all_scenes.log 2>&1 &
+#   cd AOV-GS && nohup bash scripts/aov-gs/run_geom_active_open_sem_remaining_scenes.sh > geom_active_open_sem_all_scenes.log 2>&1 &
 ##################################################
 
 set -euo pipefail

@@ -8,7 +8,7 @@ Writes **GT** and **predicted RGB** into a user-chosen directory and prints aggr
 
 Example
 -------
-  cd AOV-GS-V2
+  cd AOV-GS
 
   python scripts/run_nvs_validation.py \\
     --export_dir results/nvs_val_run0 \\

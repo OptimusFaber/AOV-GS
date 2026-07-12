@@ -7,7 +7,7 @@
 # EN: installs PyTorch first, then pip packages for eval_clip_sam_systematic.py.
 #
 # Usage:
-#   cd New-Proj
+#   cd AOV-GS
 #   bash envs/create_replica_sem_bench_env.sh
 #
 # Optional environment variables:
@@ -131,7 +131,7 @@ echo "  conda activate $ENV_NAME"
 echo "If \`transformers.pipeline\` / HF SAM fails with a bogus import error, user"
 echo "  site-packages may be breaking boto3/accelerate — run with:"
 echo "  export PYTHONNOUSERSITE=1"
-echo "Then from New-Proj:"
+echo "Then from AOV-GS:"
 echo "  export HF_HOME=/mnt/data/model-ckpts/clip/huggingface_hub"
 echo "  export OPENCLIP_CACHE=/mnt/data/model-ckpts/clip/open_clip"
 echo "  python replica_sem_benchmark/eval_clip_sam_systematic.py --help"

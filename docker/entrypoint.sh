@@ -33,13 +33,10 @@ else
     _habitat_ensure_egl_headers 2>/dev/null || true
 fi
 
-for _repo in /workspace/AOV-GS-V2 /workspace/AOV-GS; do
-  if [[ -d "${_repo}" ]]; then
-    cd "${_repo}"
-    /usr/local/bin/bootstrap_third_parties.sh
-    export PYTHONPATH="${_repo}:${_repo}/third_parties/splatam:${PYTHONPATH:-}"
-    break
-  fi
-done
+if [[ -d /workspace/AOV-GS ]]; then
+  cd /workspace/AOV-GS
+  /usr/local/bin/bootstrap_third_parties.sh
+  export PYTHONPATH="/workspace/AOV-GS:/workspace/AOV-GS/third_parties/splatam:${PYTHONPATH:-}"
+fi
 
 exec "$@"

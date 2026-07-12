@@ -10,7 +10,7 @@
 #   bash scripts/aov-gs/run_active_geom_all_scenes.sh
 #
 # Background + log:
-#   cd AOV-GS-V2 && nohup bash scripts/aov-gs/run_active_geom_all_scenes.sh > active_geom_all_scenes.log 2>&1 &
+#   cd AOV-GS && nohup bash scripts/aov-gs/run_active_geom_all_scenes.sh > active_geom_all_scenes.log 2>&1 &
 #
 # Env overrides:
 #   SEED=0              random seed (default 0)

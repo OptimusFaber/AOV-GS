@@ -17,7 +17,7 @@
 # (every LOG_EVERY iterations, default 500) — see train_language_field / LangSplatam.
 #
 # Usage:
-#   cd New-Proj
+#   cd AOV-GS
 #   bash scripts/aov-gs/run_lang_field_full_grid.sh \
 #       results/Replica/office0/ActiveOpenSem/run_0
 #

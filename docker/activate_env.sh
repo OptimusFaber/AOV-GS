@@ -28,7 +28,6 @@ set -u
 if [[ -f /.dockerenv ]]; then
     for _sh in \
         /workspace/AOV-GS/docker/nvidia_habitat_env.sh \
-        /workspace/AOV-GS-V2/docker/nvidia_habitat_env.sh \
         /usr/local/bin/nvidia_habitat_env.sh; do
         if [[ -f "${_sh}" ]]; then
             # shellcheck disable=SC1090

@@ -49,9 +49,9 @@ if [[ -f /opt/conda/etc/profile.d/conda.sh ]]; then
   # shellcheck source=/dev/null
   source /opt/conda/etc/profile.d/conda.sh
   conda activate aov-gs 2>/dev/null || true
-elif [[ -f /home/optimus/anaconda3/etc/profile.d/conda.sh ]]; then
+elif command -v conda >/dev/null 2>&1; then
   # shellcheck source=/dev/null
-  source /home/optimus/anaconda3/etc/profile.d/conda.sh
+  source "$(conda info --base)/etc/profile.d/conda.sh"
   conda activate aov-gs 2>/dev/null || true
 fi
 set -u
@@ -62,12 +62,8 @@ fi
 
 if [[ -n "${CONDA_PREFIX:-}" ]] && [[ -x "${CONDA_PREFIX}/bin/python" ]]; then
   PY="${CONDA_PREFIX}/bin/python"
-elif [[ -x /home/optimus/anaconda3/envs/aov-gs/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/aov-gs/bin/python
-elif [[ -x /home/optimus/anaconda3/envs/active-gs/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/active-gs/bin/python
-elif [[ -x /home/optimus/anaconda3/envs/active-sgm/bin/python ]]; then
-  PY=/home/optimus/anaconda3/envs/active-sgm/bin/python
+elif command -v python >/dev/null 2>&1; then
+  PY="$(command -v python)"
 elif command -v python3 >/dev/null 2>&1; then
   PY=python3
 else

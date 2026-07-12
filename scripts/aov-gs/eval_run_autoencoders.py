@@ -5,7 +5,7 @@ Evaluate language autoencoder checkpoints for a given RESULT_DIR.
 This is a small wrapper around `scripts/eval_language_autoencoder.py` that:
 - uses RESULT_DIR/language_features as the original 512d features
 - optionally uses RESULT_DIR/language_features_dim{D} for pixel-IoU (if present)
-- finds AE checkpoints under New-Proj/ckpt/<scene_name>/*.pth
+- finds AE checkpoints under AOV-GS/ckpt/<scene_name>/*.pth
 - reconstructs encoder_dims/decoder_dims from the checkpoint's state_dict shapes
 - runs evaluation with user-provided text queries and writes per-ckpt metrics files
 

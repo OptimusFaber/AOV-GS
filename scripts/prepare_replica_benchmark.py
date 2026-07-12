@@ -3,7 +3,7 @@
 Build a benchmark manifest: ~N RGB frames + GT semantics from replica_sim_nvs,
 uniformly across scenes (office*/room*).
 
-Run from the New-Proj root::
+Run from the AOV-GS root::
 
     python scripts/prepare_replica_benchmark.py --n 100 --out data/benchmarks/replica_sem100/manifest.json
 
@@ -100,7 +100,7 @@ def main() -> None:
             )
             sid += 1
 
-    # Paths in manifest — relative to New-Proj (short)
+    # Paths in manifest — relative to repo root (short)
     def rel(p: Path) -> str:
         try:
             return str(p.relative_to(proj))

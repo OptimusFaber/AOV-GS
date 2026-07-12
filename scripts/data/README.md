@@ -44,7 +44,7 @@ bash scripts/data/generate_replica_nvs.sh all
 Raw scans: `/mnt/data/scannet/scans/` (`scene0000_00`, `scene0005_00`, `scene0010_00`).
 
 ```bash
-cd AOV-GS-V2
+cd AOV-GS
 
 # 1. Mesh -> Habitat + configs + passive traj
 bash scripts/data/prepare_scannet.sh all

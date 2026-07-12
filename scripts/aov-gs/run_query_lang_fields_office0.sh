@@ -9,7 +9,7 @@
 #   - writes `RESULT_DIR/lang_field_query_eval/summary.csv`
 #
 # Usage:
-#   cd New-Proj
+#   cd AOV-GS
 #   bash scripts/aov-gs/run_query_lang_fields_office0.sh \
 #     results/Replica/office0/ActiveOpenSem/run_0
 #
@@ -33,7 +33,6 @@
 #
 # AE checkpoints:
 #   By default it will use: <repo>/ckpt/${SCENE}/.../*.pth
-#   Your setup: /home/optimus/Desktop/Work/MIPT/Diploma/ACTIVE-SGM/New-Proj/ckpt/office0/*
 ##################################################
 
 set -euo pipefail
