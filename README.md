@@ -18,13 +18,6 @@ Repository: [github.com/OptimusFaber/AOV-GS](https://github.com/OptimusFaber/AOV
 
 <p align="center"><em>Novel-view language masks: GT (green) · Geom-based (orange) · Passive (blue) · AOV-GS (yellow).</em></p>
 
-<p align="center">
-  <img src="assets/query_sofa.png" alt="Open-vocab query sofa" width="48%"/>
-  <img src="assets/gaussian_view.png" alt="Gaussian map render" width="48%"/>
-</p>
-
-<p align="center"><em>Left: text query <code>"a sofa"</code> (render / heatmap / GT / prediction). Right: RGB render from the Gaussian map.</em></p>
-
 ---
 
 ## Contents
@@ -181,7 +174,7 @@ python scripts/validate_lang_field_traj.py \
 
 | Path | Purpose |
 |------|------------|
-| `assets/` | README figures (pipeline, masks, query demo) |
+| `assets/` | README figures (pipeline overview, mask compare) |
 | `src/main/activesgm.py` | SLAM + SAM/CLIP |
 | `scripts/aov-gs/` | pipeline 01–03 |
 | `scripts/installation/quick_start.sh` | one-shot install |
