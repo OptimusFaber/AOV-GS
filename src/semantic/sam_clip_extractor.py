@@ -168,6 +168,30 @@ def _seg_to_bbox_area(seg: np.ndarray) -> tuple[np.ndarray, int]:
     return np.array([x0, y0, w, h], dtype=np.float64), area
 
 
+def _filter_black_masks(
+    image_rgb: np.ndarray,
+    masks: list,
+    max_black_fraction: float = 0.67,
+    black_threshold: int = 8,
+) -> list:
+    """Drop masks whose visible pixels are almost entirely empty/black renders."""
+    if not masks:
+        return masks
+    limit = float(max_black_fraction)
+    if limit >= 1.0:
+        return masks
+    kept = []
+    for mask in masks:
+        seg = np.asarray(mask["segmentation"], dtype=bool)
+        pixels = image_rgb[seg]
+        if pixels.size == 0:
+            continue
+        black = np.all(pixels <= int(black_threshold), axis=1)
+        if float(black.mean()) <= limit:
+            kept.append(mask)
+    return kept
+
+
 def _merge_masks_corrclip_style(
     masks: list,
     embs: np.ndarray,
@@ -302,6 +326,7 @@ class SAMCLIPExtractor:
         debug_dir: Optional[Union[str, Path]] = None,
         clip_batch_size: int = 32,
         max_masks_per_frame: int = 150,
+        max_black_fraction: float = 0.67,
         corrclip_mask_merge: bool = True,
         corrclip_merge_sim_thresh: float = 0.86,
         corrclip_merge_dist_px: float = 80.0,
@@ -324,6 +349,7 @@ class SAMCLIPExtractor:
         self.bbox_pad_px = int(bbox_pad_px)
         self.clip_batch_size = int(clip_batch_size)
         self.max_masks_per_frame = int(max_masks_per_frame)
+        self.max_black_fraction = float(max_black_fraction)
         self.submit_timeout_s = float(submit_timeout_s)
         self.corrclip_mask_merge = bool(corrclip_mask_merge)
         self.corrclip_merge_sim_thresh = float(corrclip_merge_sim_thresh)
@@ -588,6 +614,9 @@ class SAMCLIPExtractor:
             ]
 
         masks_all = _sam_masks_to_habitat(masks_all_sam)
+        masks_all = _filter_black_masks(
+            image_rgb, masks_all, max_black_fraction=self.max_black_fraction
+        )
 
         # Debug: overlay in the same orientation as SAM (readable segmentframes/)
         if self.debug_dir is not None and masks_all_sam:

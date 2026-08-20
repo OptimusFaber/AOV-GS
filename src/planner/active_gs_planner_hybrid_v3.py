@@ -135,25 +135,12 @@ class ActiveGSHybridPlannerv3(ActiveGSPlannerv3):
                 self.__class__.__name__,
             )
 
-    def _simulate_rgb_uint8(self, cand_pose: torch.Tensor) -> np.ndarray:
-        sim_out = self.sim.simulate(
-            self.pose_conversion_slam2sim(cand_pose).detach().cpu().numpy(),
-            no_print=True,
-        )
-        color = sim_out["color"]
-        if isinstance(color, torch.Tensor):
-            arr = color.detach().cpu()
-            if arr.ndim == 3 and arr.shape[0] == 3:
-                arr = arr.permute(1, 2, 0)
-            if arr.dtype != np.uint8:
-                return (arr.numpy() * 255).clip(0, 255).astype(np.uint8)
-            return arr.numpy()
-        return np.asarray(color)
-
     def _render_rgb_uint8(self, gs_slam, cand_pose: torch.Tensor) -> np.ndarray:
+        """Render candidate RGB from the current Gaussian map (no simulator look-ahead)."""
         color = gs_slam.render(cand_pose)[0]
-        img = color.permute(1, 2, 0).clamp(0, 1)
-        return (img.detach().cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        if color.ndim == 3 and color.shape[0] == 3:
+            color = color.permute(1, 2, 0)
+        return (color.detach().cpu().clamp(0, 1).numpy() * 255).astype(np.uint8)
 
     def score_exploration_semantics(
         self,
@@ -203,7 +190,9 @@ class ActiveGSHybridPlannerv3(ActiveGSPlannerv3):
                     self.step,
                     self.__class__.__name__,
                 )
-            rgb = self._simulate_rgb_uint8(cand_poses[idx])
+            # Planning-only preview from the current map. Its embeddings remain
+            # transient; only subsequently observed keyframes populate the bank.
+            rgb = self._render_rgb_uint8(gs_slam, cand_poses[idx])
             nov, ran_sam, n_masks, sam_sec = self._sem_scorer.score_candidate_rgb(
                 rgb
             )

@@ -20,9 +20,20 @@ logger = logging.getLogger(__name__)
 
 
 def _is_oom_error(exc: BaseException) -> bool:
+    """True for real CUDA OOM and common cuDNN/allocator disguises."""
     if isinstance(exc, torch.cuda.OutOfMemoryError):
         return True
-    return "out of memory" in str(exc).lower()
+    msg = str(exc).lower()
+    return any(
+        needle in msg
+        for needle in (
+            "out of memory",
+            "unable to find a valid cudnn algorithm",
+            "cudnn_status_alloc_failed",
+            "cudnn_status_internal_error",
+            "cuda error: out of memory",
+        )
+    )
 
 
 def keyframe_color_to_rgb_uint8(color: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
@@ -108,7 +119,12 @@ def mask_embedding_novelty(
 
 
 class KeyframeMaskEmbeddingBank:
-    """Bank of SAM+CLIP mask embeddings from disk (language_features/)."""
+    """Bank of embeddings from actually observed mapping keyframes only.
+
+    Candidate-view embeddings used for NBV scoring are transient and are never
+    inserted here. Missing files may be reconstructed only from the RGB stored
+    in the corresponding accepted keyframe.
+    """
 
     def __init__(self, lang_feat_dir: Union[str, Path]) -> None:
         self.lang_feat_dir = Path(lang_feat_dir)
@@ -206,6 +222,7 @@ def corrclip_kwargs_from_config(sam_cfg) -> dict:
             corrclip_interclass_suppress_alpha=0.0,
             corrclip_interclass_sim_thresh=0.78,
             corrclip_interclass_sigma_px=120.0,
+            max_black_fraction=0.67,
         )
 
     def _get(key: str, default):
@@ -224,6 +241,7 @@ def corrclip_kwargs_from_config(sam_cfg) -> dict:
             _get("corrclip_interclass_sim_thresh", 0.78)
         ),
         corrclip_interclass_sigma_px=float(_get("corrclip_interclass_sigma_px", 120.0)),
+        max_black_fraction=float(_get("max_black_fraction", 0.67)),
     )
 
 
@@ -249,6 +267,7 @@ class PlanningSAMCLIPEncoder:
         corrclip_interclass_suppress_alpha: float = 0.15,
         corrclip_interclass_sim_thresh: float = 0.78,
         corrclip_interclass_sigma_px: float = 120.0,
+        max_black_fraction: float = 0.67,
         sam_points_per_side: int = 32,
         sam_crop_n_layers: int = 1,
         sam_crop_n_points_downscale_factor: int = 1,
@@ -268,6 +287,7 @@ class PlanningSAMCLIPEncoder:
         )
         self.corrclip_interclass_sim_thresh = float(corrclip_interclass_sim_thresh)
         self.corrclip_interclass_sigma_px = float(corrclip_interclass_sigma_px)
+        self.max_black_fraction = float(max_black_fraction)
         self.sam_points_per_side = int(sam_points_per_side)
         self.sam_crop_n_layers = int(sam_crop_n_layers)
         self.sam_crop_n_points_downscale_factor = int(
@@ -386,6 +406,7 @@ class PlanningSAMCLIPEncoder:
         """RGB uint8 (H,W,3) → (N, 512) float32 L2-normalized mask embeddings."""
         from src.semantic.sam_clip_extractor import (
             _habitat_rgb_for_sam,
+            _filter_black_masks,
             _sam_masks_to_habitat,
             _to_uint8_numpy,
         )
@@ -397,13 +418,15 @@ class PlanningSAMCLIPEncoder:
         import cv2
 
         image_bgr_sam = cv2.cvtColor(image_rgb_sam, cv2.COLOR_RGB2BGR)
+        if self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
         try:
             masks_all_sam = self._mask_generator.generate(image_bgr_sam)
         except Exception as exc:
             if not _is_oom_error(exc):
                 raise
             logger.warning(
-                "PlanningSAMCLIPEncoder: OOM during SAM mask generation on %s; "
+                "PlanningSAMCLIPEncoder: OOM/cuDNN during SAM mask generation on %s; "
                 "skip semantic scoring for this frame. Error: %s",
                 self.device,
                 exc,
@@ -420,6 +443,9 @@ class PlanningSAMCLIPEncoder:
             )[: self.max_masks_per_frame]
 
         masks_all = _sam_masks_to_habitat(masks_all_sam)
+        masks_all = _filter_black_masks(
+            image_rgb, masks_all, max_black_fraction=self.max_black_fraction
+        )
         try:
             embs = _embed_masks_standalone(
                 image_rgb=image_rgb,
@@ -504,6 +530,9 @@ class HybridSemanticExplorationScorer:
         """
         Returns (novelty, did_run_sam, n_cand_masks).
         If bank too small: (0.0, False, 0) — caller should treat as inactive semantic.
+
+        Candidate embeddings are used only for this comparison and discarded;
+        the bank is populated separately from accepted mapping keyframes.
         """
         if len(self.bank) < self.min_bank_masks:
             return 0.0, False, 0, 0.0

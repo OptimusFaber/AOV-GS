@@ -149,6 +149,9 @@ sam_clip = dict(
     queue_size          = 8,    # max keyframes in-flight
     clip_batch_size     = 32,   # masks per CLIP forward
     max_masks_per_frame = 120,  # cap to bound peak GPU memory
+    # Ignore SAM masks whose visible pixels are >67% near-black. This avoids
+    # adding empty renders from incompletely observed Gaussian-map regions.
+    max_black_fraction = 0.67,
 
     # CorrCLIP-inspired refinements for SAM+CLIP collection:
     # 1) merge semantically similar nearby masks (over-segmentation reduction),

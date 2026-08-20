@@ -195,6 +195,7 @@ if __name__ == "__main__":
             bbox_pad_px         = getattr(sam_clip_cfg, 'bbox_pad_px', 20),
             clip_batch_size     = getattr(sam_clip_cfg, 'clip_batch_size', 32),
             max_masks_per_frame = getattr(sam_clip_cfg, 'max_masks_per_frame', 120),
+            max_black_fraction = getattr(sam_clip_cfg, 'max_black_fraction', 0.67),
             corrclip_mask_merge = getattr(sam_clip_cfg, 'corrclip_mask_merge', True),
             corrclip_merge_sim_thresh = getattr(sam_clip_cfg, 'corrclip_merge_sim_thresh', 0.86),
             corrclip_merge_dist_px = getattr(sam_clip_cfg, 'corrclip_merge_dist_px', 80.0),
